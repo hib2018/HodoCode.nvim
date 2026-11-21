@@ -1,0 +1,568 @@
+package main
+
+import (
+	"bufio"
+	"context"
+	"flag"
+	"fmt"
+	"io"
+	"os"
+	"os/signal"
+	"path/filepath"
+	"sort"
+	"strings"
+	"time"
+
+	"github.com/hib2018/HodoCode/internal/analyze"
+	"github.com/hib2018/HodoCode/internal/explain"
+	"github.com/hib2018/HodoCode/internal/repository"
+)
+
+func main() {
+	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt)
+	defer cancel()
+	if err := run(ctx, os.Args[1:], os.Stdin, os.Stdout, os.Stderr, explain.FX); err != nil {
+		fmt.Fprintln(os.Stderr, "hodocode:", err)
+		os.Exit(1)
+	}
+}
+
+type list []string
+
+func (s *list) String() string     { return strings.Join(*s, ",") }
+func (s *list) Set(v string) error { *s = append(*s, v); return nil }
+
+func run(ctx context.Context, args []string, in io.Reader, out, stderr io.Writer, runner explain.Runner) error {
+	if len(args) > 0 && args[0] == "serve" {
+		return runServe(ctx, args[1:], in, out, stderr)
+	}
+	if len(args) == 0 || args[0] == "help" || args[0] == "--help" || args[0] == "-h" {
+		_, err := fmt.Fprintln(out, "Usage: hodocode <deps|functions|flow|tui|explain|cache|serve> [flags]\nCommon: --language auto|go|zig|ts|rust|c|js|python --root PATH (local) or --repo https://github.com/owner/repo [--ref REF] [--subdir PATH] [--private]\nRemote: --fetch-timeout 2m --max-bytes 104857600 --cache-dir PATH --refresh\ncache: --repo URL --delete [--cache-dir PATH]\nRemote acquisition and static analysis never send code to AI.\ndeps: --dir . --depth -1 (source directory depth)\nflow/tui: --func NAME [--expand NAME ...]\nexplain: --func NAME --purpose TEXT [--exclude PATTERN ...] [--send] [--timeout 2m]\nexplain defaults to a local preview; --send invokes fx twice. Run a command with --help for flags.")
+		return err
+	}
+	command := args[0]
+	switch command {
+	case "deps", "functions", "flow", "tui", "explain", "cache":
+	default:
+		return fmt.Errorf("unknown command %q", command)
+	}
+	fs := flag.NewFlagSet(command, flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	root := fs.String("root", ".", "repository root; includes nested Go modules")
+	language := fs.String("language", "auto", "auto, go, zig, typescript (ts), rust, c, javascript (js), python")
+	repo := fs.String("repo", "", "GitHub repository HTTPS URL (static analysis does not send code to AI)")
+	ref := fs.String("ref", "", "branch, tag or commit (default: repository default branch)")
+	subdir := fs.String("subdir", ".", "analysis directory inside the fetched repository")
+	private := fs.Bool("private", false, "use existing gh authentication for private repositories")
+	fetchTimeout := fs.Duration("fetch-timeout", 2*time.Minute, "total repository acquisition timeout")
+	maxBytes := fs.Int64("max-bytes", 100<<20, "maximum compressed and expanded repository bytes")
+	cacheDir := fs.String("cache-dir", "", "repository cache directory (default: OS user cache/hodocode/repositories)")
+	refresh := fs.Bool("refresh", false, "download the selected commit again")
+	var deleteCache bool
+	if command == "cache" {
+		fs.BoolVar(&deleteCache, "delete", false, "delete all cached commits for --repo without fetching")
+	}
+	var dir, name, purpose *string
+	var nvimServer string
+	var depth *int
+	var send *bool
+	var timeout *time.Duration
+	var expansions, excludes list
+	if command == "deps" {
+		dir = fs.String("dir", ".", "source directory relative to root")
+		depth = fs.Int("depth", -1, "source directory depth; 0 = directory only, -1 = unlimited")
+	}
+	if command == "flow" || command == "tui" || command == "explain" {
+		name = fs.String("func", "", "exact function ID or unique suffix")
+	}
+	if command == "flow" || command == "tui" {
+		fs.Var(&expansions, "expand", "reachable function to expand one level (repeatable)")
+	}
+	if command == "explain" || command == "tui" {
+		defaultPurpose := ""
+		if command == "tui" {
+			defaultPurpose = "表示中の関数の役割・処理の流れ・構文の意味と注意点を、初心者にもわかるように説明してください。"
+		}
+		purpose = fs.String("purpose", defaultPurpose, "analysis purpose (sent verbatim; do not include secrets)")
+		fs.Var(&excludes, "exclude", "relative filepath.Match pattern or directory prefix (repeatable; no **)")
+		timeout = fs.Duration("timeout", 2*time.Minute, "total timeout for both fx requests")
+	}
+	if command == "tui" {
+		fs.StringVar(&nvimServer, "nvim-server", "", "explicit Neovim server address (otherwise launch nvim in this terminal)")
+	}
+	if command == "explain" {
+		send = fs.Bool("send", false, "send metadata and sanitized selected snippets to fx after auditing preview")
+	}
+	if err := fs.Parse(args[1:]); err != nil {
+		if err == flag.ErrHelp {
+			return nil
+		}
+		return err
+	}
+	if fs.NArg() != 0 {
+		return fmt.Errorf("unexpected arguments: %s", strings.Join(fs.Args(), " "))
+	}
+	explicit := map[string]bool{}
+	fs.Visit(func(f *flag.Flag) { explicit[f.Name] = true })
+	if *repo != "" && explicit["root"] {
+		return fmt.Errorf("--repo and --root are mutually exclusive")
+	}
+	if command == "cache" {
+		for flag := range explicit {
+			if flag != "repo" && flag != "delete" && flag != "cache-dir" {
+				return fmt.Errorf("--%s is not supported by cache", flag)
+			}
+		}
+		if *repo == "" || !deleteCache {
+			return fmt.Errorf("cache requires --repo URL --delete")
+		}
+		return repository.RemoveCache(*cacheDir, *repo)
+	}
+	if *repo == "" {
+		for _, flag := range []string{"ref", "subdir", "private", "fetch-timeout", "max-bytes", "cache-dir", "refresh"} {
+			if explicit[flag] {
+				return fmt.Errorf("--%s requires --repo", flag)
+			}
+		}
+	}
+	var p *analyze.Project
+	var err error
+	if *repo == "" {
+		p, err = analyze.LoadLanguageContext(ctx, *root, *language)
+	} else {
+		if *fetchTimeout <= 0 || *maxBytes <= 0 {
+			return fmt.Errorf("--fetch-timeout and --max-bytes must be positive")
+		}
+		if filepath.IsAbs(*subdir) || *subdir == ".." || strings.HasPrefix(filepath.Clean(*subdir), ".."+string(filepath.Separator)) {
+			return fmt.Errorf("--subdir must stay inside the repository")
+		}
+		snapshot, fetchErr := repository.Fetch(ctx, repository.Options{URL: *repo, Ref: *ref, CacheDir: *cacheDir, Timeout: *fetchTimeout, MaxBytes: *maxBytes, Refresh: *refresh, Private: *private})
+		if fetchErr != nil {
+			return fetchErr
+		}
+		p, err = analyze.LoadSubdirLanguageContext(ctx, snapshot.Root, *subdir, *language)
+		if err == nil {
+			p.RepositoryURL, p.CommitSHA = snapshot.URL, snapshot.SHA
+		}
+	}
+	if err != nil {
+		return err
+	}
+	if p.RepositoryURL != "" {
+		prefix := "#"
+		if command == "deps" || command == "flow" {
+			prefix = "%%"
+		}
+		if _, err := fmt.Fprintf(out, "%s %s @ %s\n", prefix, p.RepositoryURL, p.CommitSHA); err != nil {
+			return err
+		}
+	}
+	switch command {
+	case "functions":
+		for _, id := range functionIDs(p) {
+			f := p.Functions[id]
+			if _, err := fmt.Fprintf(out, "%s\t%s:%d-%d%s\n", id, f.File, f.Line, f.End, sourceSuffix(p, id)); err != nil {
+				return err
+			}
+		}
+		return nil
+	case "deps":
+		edges, err := p.Dependencies(*dir, *depth)
+		if err != nil {
+			return err
+		}
+		_, err = io.WriteString(out, analyze.Mermaid(edges))
+		return err
+	case "tui":
+		if *timeout <= 0 {
+			return fmt.Errorf("timeout must be positive")
+		}
+		if input, ok := in.(*os.File); ok && os.Getenv("TERM") != "dumb" {
+			if output, ok := out.(*os.File); ok && terminalSupported(input, output) {
+				return fullScreen(ctx, p, *name, expansions, input, output, agentOptions{runner: runner, purpose: *purpose, excludes: excludes, timeout: *timeout}, nvimServer)
+			}
+		}
+		return interactive(p, *name, expansions, in, out)
+	case "flow":
+		s, err := newFlow(p, *name, expansions)
+		if err != nil {
+			return err
+		}
+		_, err = io.WriteString(out, s.diagram())
+		return err
+	case "explain":
+		if *timeout <= 0 {
+			return fmt.Errorf("timeout must be positive")
+		}
+		id, err := p.Resolve(*name)
+		if err != nil {
+			return err
+		}
+		edges, err := p.Calls(id)
+		if err != nil {
+			return err
+		}
+		if u := p.SourceURL(id); u != "" {
+			if _, err := fmt.Fprintln(out, "# "+u); err != nil {
+				return err
+			}
+		}
+		req, err := explain.Prepare(p, id, *purpose, edges, excludes)
+		if err != nil {
+			return err
+		}
+		if !*send {
+			_, err = fmt.Fprintln(out, req.Preview())
+			return err
+		}
+		if _, err = fmt.Fprintln(stderr, req.Preview()); err != nil {
+			return err
+		}
+		ctx, cancel := context.WithTimeout(ctx, *timeout)
+		defer cancel()
+		text, err := req.Explain(ctx, runner)
+		if err != nil {
+			return err
+		}
+		_, err = fmt.Fprintln(out, text)
+		return err
+	}
+	return nil
+}
+
+func sourceSuffix(p *analyze.Project, id string) string {
+	if u := p.SourceURL(id); u != "" {
+		return "\t" + u
+	}
+	return ""
+}
+
+func functionIDs(p *analyze.Project) []string {
+	ids := make([]string, 0, len(p.Functions))
+	for id := range p.Functions {
+		if p.LocalFunction(id) {
+			ids = append(ids, id)
+		}
+	}
+	sort.Strings(ids)
+	return ids
+}
+
+type flow struct {
+	p        *analyze.Project
+	edges    []analyze.Edge
+	sites    map[string][]analyze.CallSite
+	nodes    map[string]bool
+	expanded map[string]bool
+}
+
+func newFlow(p *analyze.Project, name string, expansions []string) (*flow, error) {
+	id, err := p.Resolve(name)
+	if err != nil {
+		return nil, err
+	}
+	s := &flow{p: p, sites: map[string][]analyze.CallSite{}, nodes: map[string]bool{id: true}, expanded: map[string]bool{}}
+	if err = s.expand(id); err != nil {
+		return nil, err
+	}
+	for _, name := range expansions {
+		id, err = p.Resolve(name)
+		if err != nil {
+			return nil, err
+		}
+		if err = s.expand(id); err != nil {
+			return nil, err
+		}
+	}
+	return s, nil
+}
+func (s *flow) expand(id string) error {
+	if !s.nodes[id] {
+		return fmt.Errorf("%s is not a reachable function; expand its caller first", id)
+	}
+	if s.expanded[id] {
+		return nil
+	}
+	if err := s.p.EnsureFunction(id); err != nil {
+		return err
+	}
+	sites, err := s.p.CallSites(id)
+	if err != nil {
+		return err
+	}
+	s.sites[id] = sites
+	var edges []analyze.Edge
+	seen := map[analyze.Edge]bool{}
+	for _, site := range sites {
+		if !seen[site.Edge] {
+			seen[site.Edge] = true
+			edges = append(edges, site.Edge)
+		}
+	}
+	sort.Slice(edges, func(i, j int) bool {
+		if edges[i].From != edges[j].From {
+			return edges[i].From < edges[j].From
+		}
+		if edges[i].To != edges[j].To {
+			return edges[i].To < edges[j].To
+		}
+		return !edges[i].Unknown && edges[j].Unknown
+	})
+	s.edges = append(s.edges, edges...)
+	s.expanded[id] = true
+	for _, e := range edges {
+		if !e.Unknown {
+			if err := s.p.EnsureFunction(e.To); err == nil {
+				s.nodes[e.To] = true
+			}
+		}
+	}
+	return nil
+}
+func (s *flow) diagram() string {
+	nodes := make([]string, 0, len(s.nodes))
+	for id := range s.nodes {
+		nodes = append(nodes, id)
+	}
+	diagram := analyze.MermaidNodes(s.edges, nodes)
+	sort.Strings(nodes)
+	for _, id := range nodes {
+		if u := s.p.SourceURL(id); u != "" {
+			diagram += "%% " + id + " " + u + "\n"
+		}
+	}
+	return diagram
+}
+func choose(scan *bufio.Scanner, out io.Writer, ids []string, back bool, labels map[string]string, details bool) (string, error) {
+	prompt := "番号で選択、qで終了 > "
+	if back {
+		prompt = "番号で選択、bで戻る、qで終了 > "
+		if len(ids) == 0 {
+			prompt = "bで戻る、qで終了 > "
+		}
+	}
+	if len(ids) == 0 && !back {
+		prompt = "qで終了 > "
+	}
+	if len(ids) == 1 && labels != nil {
+		prompt = "Enterで " + labels[ids[0]] + " へ進む、" + prompt
+	}
+	if details {
+		prompt = "dで詳細切替、" + prompt
+	}
+	for {
+		if _, err := fmt.Fprint(out, prompt); err != nil {
+			return "", err
+		}
+		if !scan.Scan() {
+			return "", scan.Err()
+		}
+		text := strings.TrimSpace(scan.Text())
+		if text == "q" {
+			return "", nil
+		}
+		if back && text == "b" {
+			return "b", nil
+		}
+		if details && text == "d" {
+			return "d", nil
+		}
+		if text == "" && len(ids) == 1 && labels != nil {
+			return ids[0], nil
+		}
+		var n int
+		// Parse the entire input, not a numeric prefix.
+		if _, err := fmt.Sscan(text, &n); err == nil && fmt.Sprint(n) == text && n >= 1 && n <= len(ids) {
+			return ids[n-1], nil
+		}
+		if _, err := fmt.Fprintln(out, "表示された番号を入力してください。"); err != nil {
+			return "", err
+		}
+	}
+}
+func currentLabel(id string, bold bool) string {
+	label := "▶ " + id + "（現在）"
+	if bold {
+		return "\x1b[1m" + label + "\x1b[0m"
+	}
+	return label
+}
+
+func treeLabels(current string, ids []string) map[string]string {
+	split := func(id string) (string, string) {
+		start := strings.LastIndex(id, "/") + 1
+		if dot := strings.Index(id[start:], "."); dot >= 0 {
+			return id[:start+dot], id[start+dot+1:]
+		}
+		return "", id
+	}
+	currentPackage, _ := split(current)
+	labels := make(map[string]string, len(ids))
+	owners := map[string]string{}
+	for _, id := range ids {
+		pkg, name := split(id)
+		label := name
+		if pkg != currentPackage {
+			label = pkg[strings.LastIndex(pkg, "/")+1:] + "." + name
+		}
+		labels[id] = label
+		if previous, ok := owners[label]; ok && previous != id {
+			owners[label] = ""
+		} else {
+			owners[label] = id
+		}
+	}
+	for id, label := range labels {
+		if owners[label] == "" {
+			labels[id] = id
+		}
+	}
+	return labels
+}
+
+func interactive(p *analyze.Project, name string, expansions []string, in io.Reader, out io.Writer) error {
+	bold := false
+	if file, ok := out.(*os.File); ok && os.Getenv("TERM") != "dumb" {
+		_, noColor := os.LookupEnv("NO_COLOR")
+		info, err := file.Stat()
+		bold = !noColor && err == nil && info.Mode()&os.ModeCharDevice != 0
+	}
+	scan := bufio.NewScanner(in)
+	if name == "" {
+		ids := functionIDs(p)
+		if len(ids) == 0 {
+			return fmt.Errorf("no functions found")
+		}
+		for i, id := range ids {
+			if _, err := fmt.Fprintf(out, "%d: %s\n", i+1, id); err != nil {
+				return err
+			}
+		}
+		var err error
+		name, err = choose(scan, out, ids, false, nil, false)
+		if err != nil {
+			return err
+		}
+		if name == "" {
+			return nil
+		}
+	}
+	s, err := newFlow(p, name, expansions)
+	if err != nil {
+		return err
+	}
+	current, err := p.Resolve(name)
+	if err != nil {
+		return err
+	}
+	var history []string
+	showDetails := false
+	for {
+		var children []analyze.Edge
+		visible := []string{current}
+		if len(history) > 0 {
+			visible = append(visible, history[len(history)-1])
+		}
+		external, unknown := 0, 0
+		for _, edge := range s.edges {
+			if edge.From != current {
+				continue
+			}
+			_, local := p.Functions[edge.To]
+			if edge.Unknown {
+				unknown++
+			} else if !local {
+				external++
+			}
+			if !edge.Unknown {
+				visible = append(visible, edge.To)
+			}
+			if showDetails || (!edge.Unknown && local) {
+				children = append(children, edge)
+			}
+		}
+		sort.Slice(children, func(i, j int) bool { return children[i].To < children[j].To })
+		labels := treeLabels(current, visible)
+		if _, err = fmt.Fprintln(out); err != nil {
+			return err
+		}
+		indent := ""
+		if len(history) > 0 {
+			if _, err = fmt.Fprintln(out, labels[history[len(history)-1]]); err != nil {
+				return err
+			}
+			indent = "   "
+		}
+		prefix := ""
+		if len(history) > 0 {
+			prefix = "└─ "
+		}
+		if _, err = fmt.Fprintf(out, "%s%s\n", prefix, currentLabel(labels[current], bold)); err != nil {
+			return err
+		}
+		var ids []string
+		for i, edge := range children {
+			branch := "├─ "
+			if i == len(children)-1 {
+				branch = "└─ "
+			}
+			label := labels[edge.To]
+			_, local := p.Functions[edge.To]
+			switch {
+			case edge.Unknown:
+				label = edge.To + "（呼び出し先不明・選択不可）"
+			case !local:
+				label += "（外部ソース・選択不可）"
+			default:
+				ids = append(ids, edge.To)
+				label = fmt.Sprintf("%d: %s", len(ids), label)
+			}
+			if _, err = fmt.Fprintf(out, "%s%s%s\n", indent, branch, label); err != nil {
+				return err
+			}
+		}
+		hasDetails := external+unknown > 0
+		if hasDetails && !showDetails {
+			if _, err = fmt.Fprintf(out, "%s   外部ソース: %d件、呼び出し先不明: %d件（選択不可・dで詳細表示）\n", indent, external, unknown); err != nil {
+				return err
+			}
+		}
+		code, err := p.Source(current)
+		if err != nil {
+			return err
+		}
+		fn := p.Functions[current]
+		if u := p.SourceURL(current); u != "" {
+			if _, err = fmt.Fprintln(out, u); err != nil {
+				return err
+			}
+		}
+		if _, err = fmt.Fprintf(out, "\n%s:%d-%d\n%s\n%s\n%s\n", fn.File, fn.Line, fn.End, strings.Repeat("─", 60), code, strings.Repeat("─", 60)); err != nil {
+			return err
+		}
+		if len(ids) == 0 && len(history) == 0 && !hasDetails {
+			return nil
+		}
+		id, err := choose(scan, out, ids, len(history) > 0, labels, hasDetails)
+		if err != nil {
+			return err
+		}
+		if id == "" {
+			return nil
+		}
+		if id == "d" {
+			showDetails = !showDetails
+			continue
+		}
+		if id == "b" {
+			current = history[len(history)-1]
+			history = history[:len(history)-1]
+			continue
+		}
+		if err = s.expand(id); err != nil {
+			return err
+		}
+		history = append(history, current)
+		current = id
+	}
+}
