@@ -212,7 +212,16 @@ function M.diff()
   require('hodocode.agent').diff()
 end
 
+function M.mode()
+  require('hodocode.mode').start()
+end
+
+function M.exit_mode()
+  require('hodocode.mode').stop()
+end
+
 function M.setup(options)
+  require('hodocode.mode').stop()
   require('hodocode.client').stop_all()
   require('hodocode.agent').stop()
   M.config = vim.tbl_deep_extend('force', vim.deepcopy(defaults), options or {})
