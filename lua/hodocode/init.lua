@@ -27,14 +27,32 @@ function M.context()
   root = uv.fs_realpath(root)
   if not root or path:sub(1, #root + 1) ~= root .. '/' then error('ファイルが解析ルートの外にあります') end
   if vim.bo[buf].modified then error('解析結果は保存済みソース用です。保存してから再実行してください') end
-  local languages = { zig = 'zig', ts = 'typescript', rs = 'rust', c = 'c', h = 'c', js = 'javascript', mjs = 'javascript', cjs = 'javascript', py = 'python' }
-  local selection = ({ ts = 'typescript', js = 'javascript' })[M.config.language] or M.config.language
+  local languages = { go = 'go', zig = 'zig', ts = 'typescript', rs = 'rust', c = 'c', h = 'c', js = 'javascript', mjs = 'javascript', cjs = 'javascript', py = 'python' }
+  local extension = vim.fs.basename(path):match('%.([^.]+)$')
+  local language = languages[extension and extension:lower()]
+  if not language then
+    error('このファイル形式はHodoCodeの解析対象外です（' .. (extension and '.' .. extension or '拡張子なし')
+      .. '）。対応言語はGo・Zig・TypeScript・Rust・C・JavaScript・Pythonです。Luaは未対応で、language = "auto"にしても解析できません。', 0)
+  end
+  local selection = vim.trim(M.config.language):lower()
+  selection = ({ ts = 'typescript', js = 'javascript', rs = 'rust', py = 'python', golang = 'go', [''] = 'auto' })[selection] or selection
+  if vim.tbl_contains({ 'go', 'zig', 'typescript', 'rust', 'c', 'javascript', 'python' }, selection) and selection ~= language then
+    error('language = "' .. selection .. '"ではこの' .. language .. 'ファイルを解析できません。setupのlanguageを"auto"または"' .. language .. '"に変更してください。', 0)
+  end
+  if language == 'go' then
+    if path:match('_test%.go$') then error('Goの_test.goは現在のHodoCodeでは解析対象外です。通常の.goファイルで実行してください。', 0) end
+    local module = vim.fs.root(path, 'go.mod')
+    if not module or (module ~= root and module:sub(1, #root + 1) ~= root .. '/') then
+      error('Goの解析に必要なgo.modが解析範囲内に見つかりません（' .. root
+        .. '）。go.mod配下の.goファイルを開いて実行してください。dotfilesなど対象外のディレクトリにgo.modを追加する必要はありません。', 0)
+    end
+  end
   for _, client in ipairs(vim.lsp.get_clients()) do
     for attached in pairs(client.attached_buffers or {}) do
       if vim.api.nvim_buf_is_valid(attached) then
         local file = uv.fs_realpath(vim.api.nvim_buf_get_name(attached)) or ''
-        local language = languages[file:match('%.([^.]+)$')]
-        if file:sub(1, #root + 1) == root .. '/' and language and (selection == 'auto' or selection == language) then
+        local language = languages[(vim.fs.basename(file):match('%.([^.]+)$') or ''):lower()]
+        if file:sub(1, #root + 1) == root .. '/' and language and language ~= 'go' and (selection == 'auto' or selection == language) then
           error('対象言語のNeovim側LSPが稼働中です。バックエンドLSPとの二重起動を避けるため解析を中止しました。LSPの役割分担を確認してください')
         end
       end
