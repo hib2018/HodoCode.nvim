@@ -46,7 +46,7 @@ local function run()
   vim.api.nvim_win_set_cursor(0, { 4, 1 })
   hc.calls()
   wait(function() return vim.bo.buftype == 'nofile' end, 'call tree float')
-  wait(function() return #vim.api.nvim_buf_get_lines(0, 0, -1, false) >= 4 end, 'tree expansion')
+  wait(function() return table.concat(vim.api.nvim_buf_get_lines(0, 0, -1, false), '\n'):find('example.test/demo.leaf', 1, true) ~= nil end, 'tree expansion')
   assert(table.concat(vim.api.nvim_buf_get_lines(0, 0, -1, false), '\n'):find('example.test/demo.leaf', 1, true))
   vim.api.nvim_win_close(0, true)
 

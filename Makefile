@@ -9,3 +9,9 @@ test: build
 	nvim --headless -u NONE -l tests/edges.lua
 	nvim --headless -u NONE -l tests/errors.lua
 	nvim --headless -u NONE -l tests/mode.lua
+	nvim --headless -u NONE -l tests/marker.lua
+	nvim --headless -u NONE -l tests/navigation.lua
+	nvim --headless -u NONE -l tests/tree.lua
+	nvim --headless -u NONE -l tests/ai_trial.lua
+	nvim --headless -u NONE -l tests/trial_demo.lua
+	nvim --headless -u NONE -l tests/snacks_integration.lua

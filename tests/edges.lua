@@ -46,6 +46,7 @@ local function run()
   for _, reverse in ipairs({ false, true }) do
     vim.api.nvim_set_current_buf(source)
     vim.api.nvim_win_set_cursor(0, { 2, 0 })
+    hc.setup({ root = root, language = 'go', tree = 'native', timeout_ms = 10000 })
     local pending = {}
     clients.start = function()
       return { request = function(_, method, params, callback)
@@ -64,27 +65,29 @@ local function run()
     local unknown = vim.json.decode('{"To":"dynamic","Name":"dynamic","Unknown":true,"Reason":"unresolved","Candidates":null}')
     pending.entry({ calls = { { To = 'a' }, { To = 'b' }, unknown }, Targets = { a = a, b = b } })
     local rendered = vim.api.nvim_buf_get_lines(tree, 0, -1, false)
-    assert(#rendered == 6 and rendered[6]:find('dynamic', 1, true), 'null Candidates broke rendering')
-    assert(rendered[6]:find('未解決', 1, true), 'unknown call lost its unresolved label')
-    local enter
+    assert(#rendered == 5 and rendered[5]:find('dynamic', 1, true), 'null Candidates broke rendering')
+    assert(rendered[5]:find('未解決', 1, true), 'unknown call lost its unresolved label')
+    local toggle
     for _, mapping in ipairs(vim.api.nvim_buf_get_keymap(tree, 'n')) do
-      if mapping.lhs == '<CR>' then enter = mapping.callback end
+      if mapping.lhs == '<Tab>' then toggle = mapping.callback end
     end
-    assert(type(enter) == 'function', 'tree Enter mapping missing')
-    vim.api.nvim_win_set_cursor(win, { 4, 0 }); enter()
-    vim.api.nvim_win_set_cursor(win, { 5, 0 }); enter()
+    assert(type(toggle) == 'function', 'tree toggle mapping missing')
+    vim.api.nvim_win_set_cursor(win, { 3, 0 }); toggle()
+    vim.api.nvim_win_set_cursor(win, { 4, 0 }); toggle()
     assert(pending.a and pending.b, 'sibling requests must both be pending')
     local function answer_a() pending.a({ calls = { { To = ac.ID } }, Targets = { [ac.ID] = ac } }) end
     local function answer_b() pending.b({ calls = { { To = bc.ID } }, Targets = { [bc.ID] = bc } }) end
     if reverse then answer_b(); answer_a() else answer_a(); answer_b() end
     rendered = vim.api.nvim_buf_get_lines(tree, 0, -1, false)
-    assert(vim.deep_equal({ unpack(rendered, 4, 7) }, { '- a', '  - a.child', '- b', '  - b.child' }),
+    local ids = {}
+    for index = 3, 6 do ids[#ids + 1] = rendered[index]:match('([%w%.]+)$') end
+    assert(vim.deep_equal(ids, { 'a', 'a.child', 'b', 'b.child' }),
       'async sibling order corrupted: ' .. table.concat(rendered, '|'))
-    assert(rendered[8]:find('dynamic', 1, true), 'parallel node array lost unknown sibling')
+    assert(rendered[7]:find('dynamic', 1, true), 'parallel node array lost unknown sibling')
     -- Validate node/row alignment too: an inserted child must still navigate.
     local jump, jumped = require('hodocode.ui').jump, nil
     require('hodocode.ui').jump = function(_, target) jumped = target.ID end
-    vim.api.nvim_win_set_cursor(win, { 7, 0 })
+    vim.api.nvim_win_set_cursor(win, { 6, 0 })
     for _, mapping in ipairs(vim.api.nvim_buf_get_keymap(tree, 'n')) do
       if mapping.lhs == 'o' then mapping.callback() end
     end

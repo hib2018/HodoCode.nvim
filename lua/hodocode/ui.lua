@@ -39,8 +39,16 @@ function M.jump(root, f)
     vim.notify('HodoCode: project outside target rejected', vim.log.levels.ERROR)
     return
   end
+  for _, buf in ipairs(vim.api.nvim_list_bufs()) do
+    if vim.bo[buf].modified and (vim.uv or vim.loop).fs_realpath(vim.api.nvim_buf_get_name(buf)) == real then
+      vim.notify('HodoCode: 移動先に未保存の変更があります。保存して再解析してください', vim.log.levels.ERROR)
+      return
+    end
+  end
   vim.cmd("normal! m'")
-  vim.cmd.edit(vim.fn.fnameescape(real))
+  if (vim.uv or vim.loop).fs_realpath(vim.api.nvim_buf_get_name(0)) ~= real then
+    vim.cmd.edit(vim.fn.fnameescape(real))
+  end
   vim.api.nvim_win_set_cursor(0, { f.Line, 0 })
 end
 

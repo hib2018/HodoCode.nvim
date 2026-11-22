@@ -6,6 +6,7 @@ local defaults = {
   backend = { plugin_root .. '/bin/hodocode' }, language = 'auto', root = nil,
   timeout_ms = 120000, max_response_bytes = 8 * 1024 * 1024,
   agent = nil, agent_timeout_ms = 120000, max_agent_bytes = 1024 * 1024,
+  tree = 'auto', graph_renderer = nil, explain_agent = nil, chat = nil, excludes = {},
 }
 M.config = vim.deepcopy(defaults)
 
@@ -60,7 +61,7 @@ function M.context()
   end
   local cursor = vim.api.nvim_win_get_cursor(0)
   local ctx = {
-    buf = buf, root = root, file = path:sub(#root + 2), path = path,
+    buf = buf, win = vim.api.nvim_get_current_win(), root = root, file = path:sub(#root + 2), path = path,
     row = cursor[1] - 1, column = cursor[2],
     tick = vim.api.nvim_buf_get_changedtick(buf), stamp = stamp(path),
   }
@@ -68,6 +69,11 @@ function M.context()
     return vim.api.nvim_buf_is_valid(buf) and vim.api.nvim_buf_get_name(buf) == name
       and vim.api.nvim_buf_get_changedtick(buf) == ctx.tick and not vim.bo[buf].modified
       and stamp(path) == ctx.stamp
+  end
+  function ctx.focused()
+    if vim.api.nvim_get_current_win() ~= ctx.win or vim.api.nvim_get_current_buf() ~= ctx.buf then return false end
+    local cursor = vim.api.nvim_win_get_cursor(0)
+    return cursor[1] == ctx.row + 1 and cursor[2] == ctx.column
   end
   return ctx
 end
@@ -80,7 +86,7 @@ local function with_context(action)
     -- Reload before each operation so navigation never reuses another file's old snapshot.
     client:request('reload', {}, function(_, reload_err)
       if reload_err then notify(reload_err); return end
-      if ctx.valid() then action(ctx, client) end
+      if ctx.valid() and ctx.focused() then action(ctx, client) end
     end)
   end)
   if not success then notify(tostring(err)) end
@@ -89,7 +95,7 @@ end
 local function checked(ctx, callback)
   return function(result, err)
     if err then notify(err); return end
-    if not ctx.valid() then return end
+    if not ctx.valid() or not ctx.focused() then return end
     callback(result)
   end
 end
@@ -122,64 +128,50 @@ end
 function M.calls()
   with_context(function(ctx, client)
     at_cursor(ctx, client, function(f)
-      local ui = require('hodocode.ui')
-      local rows = { '# ' .. f.ID, 'Enter: 展開 / 移動  q: 閉じる', '' }
-      local nodes = {}
-      local buf, win = ui.float(rows, 'HodoCode 呼び出しツリー', ctx)
-      local function expand(id, depth, ancestors, anchor)
-        client:request('calls', { ['function'] = id }, checked(ctx, function(result)
-          if not vim.api.nvim_buf_is_valid(buf) then return end
-          local insert_at = 3
-          if anchor then
-            for line, node in ipairs(nodes) do
-              if node == anchor then insert_at = line; break end
-            end
-          end
-          local additions, added_nodes = {}, {}
-          for _, site in ipairs(result.calls) do
-            local target = result.Targets[site.To]
-            local cycle = ancestors[site.To] == true
-            local label = site.To or site.Name or '(unknown)'
-            if site.Unknown then
-              label = label .. ' [未解決: ' .. (site.Reason or '') .. ']'
-              if type(site.Candidates) == 'table' and #site.Candidates > 0 then label = label .. ' 候補: ' .. table.concat(site.Candidates, ', ') end
-            elseif cycle then label = label .. ' [循環]' end
-            additions[#additions + 1] = string.rep('  ', depth) .. '- ' .. label
-            added_nodes[#additions] = { id = site.To, target = target, depth = depth, ancestors = ancestors,
-              expandable = not site.Unknown and not cycle and target ~= nil }
-          end
-          if #additions == 0 then additions = { string.rep('  ', depth) .. '(呼び出しなし)' } end
-          for i = #additions, 1, -1 do
-            table.insert(rows, insert_at + 1, additions[i])
-            table.insert(nodes, insert_at + 1, added_nodes[i] or false)
-          end
-          vim.bo[buf].modifiable = true
-          vim.api.nvim_buf_set_lines(buf, 0, -1, false, rows)
-          vim.bo[buf].modifiable = false
-        end))
-      end
-      nodes = { false, false, false }
-      expand(f.ID, 0, { [f.ID] = true })
-      vim.keymap.set('n', '<CR>', function()
-        if not ctx.valid() then notify('ソース変更後はツリーを開き直してください'); return end
-        local line = vim.api.nvim_win_get_cursor(win)[1]
-        local node = nodes[line]
-        if not node then return end
-        if node.expandable then
-          node.expandable = false
-          local ancestors = vim.deepcopy(node.ancestors)
-          ancestors[node.id] = true
-          expand(node.id, node.depth + 1, ancestors, node)
-        elseif node.target then
-          vim.api.nvim_win_close(win, true)
-          ui.jump(ctx.root, node.target)
-        end
-      end, { buffer = buf })
-      vim.keymap.set('n', 'o', function()
-        local node = nodes[vim.api.nvim_win_get_cursor(win)[1]]
-        if ctx.valid() and node and node.target then vim.api.nvim_win_close(win, true); ui.jump(ctx.root, node.target) end
-      end, { buffer = buf })
+      require('hodocode.tree').open(ctx, client, f, M.config)
     end)
+  end)
+end
+
+function M.follow()
+  with_context(function(ctx, client)
+    at_cursor(ctx, client, function(f)
+      client:request('calls', { ['function'] = f.ID }, checked(ctx, function(result)
+        if vim.api.nvim_get_current_buf() ~= ctx.buf then return end
+        local cursor = vim.api.nvim_win_get_cursor(0)
+        if cursor[1] ~= ctx.row + 1 or cursor[2] ~= ctx.column then return end
+        local matches = {}
+        for _, site in ipairs(result.calls) do
+          if site.Line == ctx.row + 1 and site.Column <= ctx.column + 1 and ctx.column + 1 < site.EndColumn then
+            matches[#matches + 1] = site
+          end
+        end
+        if #matches ~= 1 then notify(#matches == 0 and 'カーソルを呼び出し名の上に置いてください' or '複数の呼び出し候補が重なるため移動できません'); return end
+        local site = matches[1]
+        if site.Unknown then
+          local reason = site.Reason and site.Reason ~= '' and site.Reason or ((site.Name or '') .. ' の呼び出し先を確定できません')
+          if type(site.Candidates) == 'table' and #site.Candidates > 0 then reason = reason .. ' 候補: ' .. table.concat(site.Candidates, ', ') end
+          notify('未解決: ' .. reason); return
+        end
+        local target = result.Targets[site.To]
+        if not target then notify('呼び出し先はローカルの解析対象外です'); return end
+        require('hodocode.ui').jump(ctx.root, target)
+      end))
+    end)
+  end)
+end
+
+function M.graph()
+  with_context(function(ctx, client)
+    client:request('functions', {}, checked(ctx, function(functions)
+      local current
+      for _, f in ipairs(functions) do
+        if f.File == ctx.file and f.Line <= ctx.row + 1 and f.End >= ctx.row + 1 then
+          if not current or f.End - f.Line < current.End - current.Line then current = f end
+        end
+      end
+      require('hodocode.graph').open(ctx, client, current, M.config)
+    end))
   end)
 end
 
@@ -200,6 +192,7 @@ function M.syntax()
 end
 
 function M.reload()
+  require('hodocode.tree').clear()
   require('hodocode.client').stop_all()
   with_context(function() vim.notify('HodoCode: 再解析しました') end)
 end
@@ -212,6 +205,32 @@ function M.diff()
   require('hodocode.agent').diff()
 end
 
+function M.explain(prompt)
+  require('hodocode.explain').run(M.config, prompt)
+end
+
+function M.chat()
+  require('hodocode.chat').open(M.config)
+end
+
+function M.notes_toggle()
+  require('hodocode.explain').toggle()
+end
+
+function M.notes_clear()
+  require('hodocode.explain').clear()
+end
+
+function M.notes_show()
+  require('hodocode.explain').show()
+end
+
+function M.cancel()
+  require('hodocode.agent').stop()
+  require('hodocode.explain').stop()
+  require('hodocode.chat').stop()
+end
+
 function M.mode()
   require('hodocode.mode').start()
 end
@@ -222,20 +241,28 @@ end
 
 function M.setup(options)
   require('hodocode.mode').stop()
+  require('hodocode.tree').clear()
   require('hodocode.client').stop_all()
-  require('hodocode.agent').stop()
+  M.cancel()
+  require('hodocode.explain').clear()
   M.config = vim.tbl_deep_extend('force', vim.deepcopy(defaults), options or {})
   assert(type(M.config.backend) == 'table' and #M.config.backend > 0, 'backend must be an argv list')
   for _, key in ipairs({ 'timeout_ms', 'max_response_bytes', 'agent_timeout_ms', 'max_agent_bytes' }) do
     local value = M.config[key]
     assert(type(value) == 'number' and value > 0 and value == math.floor(value), key .. ' must be a positive integer')
   end
-  assert(M.config.agent == nil or (type(M.config.agent) == 'table' and #M.config.agent > 0), 'agent must be an argv list')
-  for _, argv in ipairs({ M.config.backend, M.config.agent or {} }) do
-    for _, arg in ipairs(argv) do assert(type(arg) == 'string', 'command arguments must be strings') end
+  for _, key in ipairs({ 'backend', 'agent', 'explain_agent', 'chat' }) do
+    local argv = M.config[key]
+    assert(argv == nil or (type(argv) == 'table' and #argv > 0 and type(argv[1]) == 'string' and argv[1] ~= ''), key .. ' must be an argv list')
+    for _, arg in ipairs(argv or {}) do assert(type(arg) == 'string', 'command arguments must be strings') end
   end
+  assert(vim.tbl_contains({ 'auto', 'native', 'snacks' }, M.config.tree), 'tree must be auto, native or snacks')
+  assert(M.config.graph_renderer == nil or type(M.config.graph_renderer) == 'function', 'graph_renderer must be a function')
+  assert(type(M.config.excludes) == 'table', 'excludes must be a list')
+  for _, pattern in ipairs(M.config.excludes) do assert(type(pattern) == 'string', 'excludes must contain strings') end
   local group = vim.api.nvim_create_augroup('HodoCode', { clear = true })
   vim.api.nvim_create_autocmd('BufWritePost', { group = group, callback = function()
+    require('hodocode.tree').clear()
     require('hodocode.client').stop_all()
   end })
   vim.api.nvim_create_autocmd({ 'FocusGained', 'BufEnter' }, { group = group, callback = function()
@@ -251,7 +278,7 @@ function M.setup(options)
   end })
   vim.api.nvim_create_autocmd('VimLeavePre', { group = group, callback = function()
     require('hodocode.client').stop_all()
-    require('hodocode.agent').stop()
+    M.cancel()
   end })
 end
 

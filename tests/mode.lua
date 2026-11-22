@@ -17,11 +17,10 @@ local function run()
   local hc = require('hodocode')
   local mode = require('hodocode.mode')
   local dispatched = {}
-  for _, name in ipairs({ 'functions', 'calls', 'syntax', 'reload', 'agent', 'diff' }) do
+  for _, name in ipairs({ 'functions', 'calls', 'syntax', 'reload', 'explain', 'diff', 'follow', 'graph', 'chat', 'notes_toggle', 'notes_clear', 'notes_show', 'cancel' }) do
     local method = name
     hc[method] = function() dispatched[#dispatched + 1] = method end
   end
-  require('hodocode.agent').stop = function() dispatched[#dispatched + 1] = 'cancel' end
   require('hodocode.client').start = function() error('mode tests must not start a backend') end
 
   local root = vim.fn.tempname()
@@ -67,7 +66,7 @@ local function run()
       assert(actual[field] == expected[field], label .. ': changed mapping field ' .. field)
     end
   end
-  local keys = { 'f', 'c', 's', 'r', 'a', 'x', 'd', '<Esc>' }
+  local keys = { 'f', 'c', 's', 'r', 'a', 'x', 'd', 'g', 't', 'v', 'z', 'K', '<CR>', '<Esc>' }
   local local_calls, global_calls = 0, 0
   local local_callback = function() local_calls = local_calls + 1 end
   local global_callback = function() global_calls = global_calls + 1 end
@@ -110,7 +109,8 @@ local function run()
 
   local actions = {
     { 'f', 'functions' }, { 'c', 'calls' }, { 's', 'syntax' }, { 'r', 'reload' },
-    { 'x', 'cancel' }, { 'd', 'diff' }, { 'a', 'agent' },
+    { 'x', 'cancel' }, { 'd', 'diff' }, { 'a', 'explain' }, { '<CR>', 'follow' },
+    { 'g', 'graph' }, { 't', 'chat' }, { 'v', 'notes_toggle' }, { 'z', 'notes_clear' }, { 'K', 'notes_show' },
   }
   for index, action in ipairs(actions) do
     invoke(action[1])

@@ -2,7 +2,9 @@ local M = {}
 local state
 local actions = {
   f = { 'functions', '関数' }, c = { 'calls', 'ツリー' }, s = { 'syntax', '構文' },
-  r = { 'reload', '再解析' }, a = { 'agent', 'AI' }, x = { 'cancel', 'AI中止' }, d = { 'diff', '差分' },
+  r = { 'reload', '再解析' }, a = { 'explain', 'AI解説' }, x = { 'cancel', 'AI中止' }, d = { 'diff', '差分' },
+  ['<CR>'] = { 'follow', '呼び出し先' }, g = { 'graph', '図' }, t = { 'chat', 'チャット' },
+  v = { 'notes_toggle', '注釈表示切替' }, z = { 'notes_clear', '注釈消去' }, K = { 'notes_show', '注釈全文' },
 }
 
 function M.active()
@@ -13,6 +15,7 @@ function M.stop()
   if not state then return end
   local current = state
   state = nil
+  require('hodocode.marker').stop()
   vim.api.nvim_del_augroup_by_id(current.group)
   if vim.api.nvim_buf_is_valid(current.buf) then
     vim.api.nvim_buf_call(current.buf, function()
@@ -31,7 +34,9 @@ end
 
 local function guide(current)
   local width = math.max(1, math.min(78, vim.o.columns - 4))
-  local lines = { 'HodoCode MODE  |  Esc: 終了', 'f:関数 c:ツリー s:構文 r:再解析 a:AI x:中止 d:差分' }
+  local lines = { 'HodoCode MODE  |  Esc: 終了  Enter:呼び出し先',
+    'f:関数 c:ツリー s:構文 r:再解析 g:図 d:差分',
+    'a:AI解説 t:チャット x:中止 v:注釈表示 z:注釈消去 K:注釈全文' }
   local buf = vim.api.nvim_create_buf(false, true)
   vim.bo[buf].bufhidden = 'wipe'
   vim.bo[buf].filetype = 'hodocode-mode'
@@ -39,8 +44,8 @@ local function guide(current)
   vim.bo[buf].modifiable = false
   vim.bo[buf].readonly = true
   current.guide = vim.api.nvim_open_win(buf, false, {
-    relative = 'editor', row = math.max(0, vim.o.lines - vim.o.cmdheight - 5),
-    col = math.max(0, vim.o.columns - width - 2), width = width, height = 2,
+    relative = 'editor', row = math.max(0, vim.o.lines - vim.o.cmdheight - 6),
+    col = math.max(0, vim.o.columns - width - 2), width = width, height = 3,
     style = 'minimal', border = 'rounded', focusable = false, zindex = 40,
   })
   vim.wo[current.guide].wrap = false
@@ -57,15 +62,14 @@ function M.start()
   M.stop()
   local current = { buf = buf, bindings = {}, group = vim.api.nvim_create_augroup('HodoCodeMode', { clear = true }) }
   state = current
-  for _, key in ipairs({ 'f', 'c', 's', 'r', 'a', 'x', 'd', '<Esc>' }) do
+  for _, key in ipairs({ 'f', 'c', 's', 'r', 'a', 'x', 'd', 'g', 't', 'v', 'z', 'K', '<CR>', '<Esc>' }) do
     local previous = vim.fn.maparg(key, 'n', false, true)
     local callback = function()
       if state ~= current or vim.api.nvim_get_current_buf() ~= buf then return end
       if key == '<Esc>' then M.stop(); return end
       local ok, err = pcall(function()
         local method = actions[key][1]
-        if method == 'cancel' then require('hodocode.agent').stop()
-        else require('hodocode')[method]() end
+        require('hodocode')[method]()
       end)
       if not ok then vim.notify('HodoCode: ' .. tostring(err), vim.log.levels.ERROR) end
     end
@@ -85,12 +89,13 @@ function M.start()
     if current.guide and vim.api.nvim_win_is_valid(current.guide) then
       local width = math.max(1, math.min(78, vim.o.columns - 4))
       vim.api.nvim_win_set_config(current.guide, {
-        relative = 'editor', row = math.max(0, vim.o.lines - vim.o.cmdheight - 5),
-        col = math.max(0, vim.o.columns - width - 2), width = width, height = 2,
+        relative = 'editor', row = math.max(0, vim.o.lines - vim.o.cmdheight - 6),
+        col = math.max(0, vim.o.columns - width - 2), width = width, height = 3,
       })
     end
   end })
   guide(current)
+  require('hodocode.marker').start(buf, current.group)
 end
 
 return M
