@@ -138,6 +138,8 @@ func serveDispatch(ctx context.Context, project **analyze.Project, root, languag
 			functions = append(functions, p.Functions[id])
 		}
 		return functions, nil
+	case "function-names":
+		return p.FunctionNames(req.Params.File)
 	case "calls":
 		if req.Params.Function == "" {
 			return nil, fmt.Errorf("function is required")

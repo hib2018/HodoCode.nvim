@@ -16,12 +16,15 @@ bin/hodocode serve --root /absolute/project --language auto
 | method | params | result |
 | --- | --- | --- |
 | `functions` | `{}` | ローカル関数配列、ID順 |
+| `function-names` | `{"file":"main.go"}` | 関数名の位置配列：`Line`・`Column`・`EndColumn`（1始まりのUTF-8バイト位置、終端は含まない） |
 | `calls` | `{"function":"完全IDまたは一意の接尾辞"}` | `function`、`calls`配列、`Targets`辞書 |
 | `syntax` | `{"file":"main.go","row":2,"column":0}` | `title`・`description`・`syntax`・`example`・`caution`・`reference` |
 | `reload` | `{}` | `{"reloaded":true}` |
 | `graph` | `{"kind":"deps","dir":".","depth":-1}` または `{"kind":"calls","function":"完全ID","expand":[]}` | `kind`、`nodes:[{id,label}]`、`edges:[{from,to,unknown?}]`、`mermaid` |
 
 関数・呼び出し情報のフィールド名は既存Go構造体に合わせて大文字始まり。`calls`の要素は`From`、`To`、`Unknown`、`Line`、`Column`、`EndColumn`、`Offset`、`Name`、`Reason`、`Candidates`を持つ。`Targets`はIDからローカル関数への辞書。候補は移動先を確定する根拠として扱わない。SDKソースの遅延読み込みはこのAPIでは追加しない。
+
+`function-names`は指定ファイルの解析時スナップショットから、宣言・名前付き呼び出し・識別可能なGoの関数参照を返す。コメント・文字列の中の名前は含めない。Go以外は既存の宣言情報と字句解析が中心で、非呼び出し参照やジェネリック・計算された呼び出しの識別には制限がある。ジャンプ可能性を保証するAPIではなく、強調表示用。追加のファイル読み取りやAI送信はしない。
 
 `syntax`の`row`は0始まり、`column`は0始まりのUTF-8バイト位置。Neovimのカーソル列をそのまま渡し、バックエンドで既存のルーン位置へ変換する。関数の`Line`/`End`と呼び出し位置は既存解析器の1始まり。`file`はプロジェクト相対パスで、絶対パス・親ディレクトリ参照・ルート外へのシンボリックリンクを拒否する。
 
