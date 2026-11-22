@@ -234,6 +234,38 @@ function M.cancel()
   require('hodocode.chat').stop()
 end
 
+function M.next_call()
+  require('hodocode.marker').move(1, vim.v.count1)
+end
+
+function M.previous_call()
+  require('hodocode.marker').move(-1, vim.v.count1)
+end
+
+function M.function_start()
+  require('hodocode.marker').edge(false)
+end
+
+function M.function_end()
+  require('hodocode.marker').edge(true)
+end
+
+function M.back()
+  require('hodocode.ui').back()
+end
+
+function M.help_up()
+  require('hodocode.ui').scroll(-1)
+end
+
+function M.help_down()
+  require('hodocode.ui').scroll(1)
+end
+
+function M.explain_now()
+  M.explain('Explain this buffer line by line. Read-only; do not modify files.')
+end
+
 function M.mode()
   require('hodocode.mode').start()
 end

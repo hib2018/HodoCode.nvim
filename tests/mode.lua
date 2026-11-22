@@ -17,7 +17,7 @@ local function run()
   local hc = require('hodocode')
   local mode = require('hodocode.mode')
   local dispatched = {}
-  for _, name in ipairs({ 'functions', 'calls', 'syntax', 'reload', 'explain', 'diff', 'follow', 'graph', 'chat', 'notes_toggle', 'notes_clear', 'notes_show', 'cancel' }) do
+  for _, name in ipairs({ 'functions', 'calls', 'syntax', 'reload', 'explain', 'diff', 'follow', 'graph', 'chat', 'notes_toggle', 'notes_clear', 'notes_show', 'cancel', 'next_call', 'previous_call', 'back', 'function_start', 'function_end', 'explain_now', 'help_up', 'help_down' }) do
     local method = name
     hc[method] = function() dispatched[#dispatched + 1] = method end
   end
@@ -66,7 +66,7 @@ local function run()
       assert(actual[field] == expected[field], label .. ': changed mapping field ' .. field)
     end
   end
-  local keys = { 'f', 'c', 's', 'r', 'a', 'x', 'd', 'g', 't', 'v', 'z', 'K', '<CR>', '<Esc>' }
+  local keys = { 'f', 'c', 's', 'r', 'a', 'x', 'd', 'g', 'G', 't', 'e', 'i', 'E', 'v', 'z', 'K', 'm', 'n', 'N', 'b', '[', ']', 'q', '<C-c>', '<C-d>', '<CR>', '<Esc>' }
   local local_calls, global_calls = 0, 0
   local local_callback = function() local_calls = local_calls + 1 end
   local global_callback = function() global_calls = global_calls + 1 end
@@ -108,9 +108,11 @@ local function run()
   end
 
   local actions = {
-    { 'f', 'functions' }, { 'c', 'calls' }, { 's', 'syntax' }, { 'r', 'reload' },
+    { 'f', 'functions' }, { 't', 'calls' }, { 's', 'syntax' }, { 'r', 'reload' },
     { 'x', 'cancel' }, { 'd', 'diff' }, { 'a', 'explain' }, { '<CR>', 'follow' },
-    { 'g', 'graph' }, { 't', 'chat' }, { 'v', 'notes_toggle' }, { 'z', 'notes_clear' }, { 'K', 'notes_show' },
+    { 'm', 'graph' }, { 'e', 'chat' }, { 'i', 'chat' }, { 'c', 'notes_toggle' }, { 'z', 'notes_clear' }, { 'K', 'notes_show' },
+    { 'n', 'next_call' }, { 'N', 'previous_call' }, { 'b', 'back' }, { 'g', 'function_start' }, { 'G', 'function_end' },
+    { 'E', 'explain_now' }, { '[', 'help_up' }, { ']', 'help_down' },
   }
   for index, action in ipairs(actions) do
     invoke(action[1])
@@ -134,6 +136,11 @@ local function run()
   assert(mode.active() == true, 'mode command did not enter')
   vim.cmd('HodoCodeModeExit')
   inactive('exit command')
+  for _, key in ipairs({ 'q', '<C-c>', '<C-d>', 'v' }) do
+    mode.start()
+    invoke(key)
+    inactive('TUI exit ' .. key)
+  end
 
   mode.start()
   vim.api.nvim_win_close(guides()[1], true)

@@ -59,7 +59,7 @@ local function run()
     end
   end
   local function open_tree()
-    invoke('c')
+    invoke('t')
     local p
     wait(function()
       p = picker()
@@ -114,7 +114,7 @@ local function run()
   p:action('tree_toggle')
   wait(function() return not other.open and p:count() == 4 end, 'sibling collapse')
   select_node(p, 'branch')
-  p:action('close')
+  invoke('t')
   source_return()
 
   p = open_tree()
@@ -155,7 +155,7 @@ local function run()
     for _, win in ipairs(vim.api.nvim_list_wins()) do if not before[win] then return false end end
     return true
   end
-  for _, key in ipairs({ 'c', 'g' }) do
+  for _, key in ipairs({ 't', 'm' }) do
     local before = window_snapshot()
     vim.api.nvim_win_set_cursor(source_win, { 6, 12 })
     invoke(key)
@@ -167,7 +167,7 @@ local function run()
   vim.cmd('vsplit')
   local second_win = vim.api.nvim_get_current_win()
   check(second_win ~= source_win and vim.api.nvim_get_current_buf() == source, 'same-source split missing')
-  for _, key in ipairs({ 'c', 'g' }) do
+  for _, key in ipairs({ 't', 'm' }) do
     vim.api.nvim_set_current_win(source_win)
     vim.api.nvim_win_set_cursor(source_win, { 6, 12 })
     vim.api.nvim_win_set_cursor(second_win, { 6, 12 })

@@ -1,11 +1,18 @@
 local M = {}
 local state
 local actions = {
-  f = { 'functions', '関数' }, c = { 'calls', 'ツリー' }, s = { 'syntax', '構文' },
-  r = { 'reload', '再解析' }, a = { 'explain', 'AI解説' }, x = { 'cancel', 'AI中止' }, d = { 'diff', '差分' },
-  ['<CR>'] = { 'follow', '呼び出し先' }, g = { 'graph', '図' }, t = { 'chat', 'チャット' },
-  v = { 'notes_toggle', '注釈表示切替' }, z = { 'notes_clear', '注釈消去' }, K = { 'notes_show', '注釈全文' },
+  n = { 'next_call', '次の呼び出し' }, N = { 'previous_call', '前の呼び出し' },
+  b = { 'back', '呼び出し元へ戻る' }, g = { 'function_start', '関数先頭' }, G = { 'function_end', '関数末尾' },
+  t = { 'calls', 'ツリー' }, e = { 'chat', 'エージェント' }, i = { 'chat', 'エージェント入力' },
+  E = { 'explain_now', '行解説を生成' }, c = { 'notes_toggle', '行解説表示切替' },
+  ['['] = { 'help_up', '解説を上へ' }, [']'] = { 'help_down', '解説を下へ' },
+  v = { 'exit_mode', '編集へ戻る' },
+  f = { 'functions', '関数一覧' }, s = { 'syntax', '構文' }, r = { 'reload', '再解析' },
+  a = { 'explain', 'AI解説への指示' }, x = { 'cancel', 'AI中止' }, d = { 'diff', '差分' },
+  ['<CR>'] = { 'follow', '呼び出し先' }, m = { 'graph', '図' },
+  z = { 'notes_clear', '注釈消去' }, K = { 'notes_show', '注釈全文' },
 }
+local exits = { ['<Esc>'] = true, q = true, ['<C-c>'] = true, ['<C-d>'] = true }
 
 function M.active()
   return state ~= nil
@@ -33,10 +40,11 @@ function M.stop()
 end
 
 local function guide(current)
-  local width = math.max(1, math.min(78, vim.o.columns - 4))
-  local lines = { 'HodoCode MODE  |  Esc: 終了  Enter:呼び出し先',
-    'f:関数 c:ツリー s:構文 r:再解析 g:図 d:差分',
-    'a:AI解説 t:チャット x:中止 v:注釈表示 z:注釈消去 K:注釈全文' }
+  local width = math.max(1, math.min(90, vim.o.columns - 4))
+  local lines = { 'HodoCode MODE | q/Esc:終了 Enter:進む b:戻る v:編集',
+    'n/N:次/前の呼び出し g/G:関数先頭/末尾 t:ツリー s:構文 r:再解析',
+    'e/i:エージェント E:行解説生成 c:解説表示 [/]:解説スクロール',
+    'f:一覧 m:図 a:指示 x:中止 d:diff z:注釈消去 K:注釈全文' }
   local buf = vim.api.nvim_create_buf(false, true)
   vim.bo[buf].bufhidden = 'wipe'
   vim.bo[buf].filetype = 'hodocode-mode'
@@ -44,8 +52,8 @@ local function guide(current)
   vim.bo[buf].modifiable = false
   vim.bo[buf].readonly = true
   current.guide = vim.api.nvim_open_win(buf, false, {
-    relative = 'editor', row = math.max(0, vim.o.lines - vim.o.cmdheight - 6),
-    col = math.max(0, vim.o.columns - width - 2), width = width, height = 3,
+    relative = 'editor', row = math.max(0, vim.o.lines - vim.o.cmdheight - 7),
+    col = math.max(0, vim.o.columns - width - 2), width = width, height = 4,
     style = 'minimal', border = 'rounded', focusable = false, zindex = 40,
   })
   vim.wo[current.guide].wrap = false
@@ -62,11 +70,11 @@ function M.start()
   M.stop()
   local current = { buf = buf, bindings = {}, group = vim.api.nvim_create_augroup('HodoCodeMode', { clear = true }) }
   state = current
-  for _, key in ipairs({ 'f', 'c', 's', 'r', 'a', 'x', 'd', 'g', 't', 'v', 'z', 'K', '<CR>', '<Esc>' }) do
+  for key in pairs(vim.tbl_extend('force', actions, exits)) do
     local previous = vim.fn.maparg(key, 'n', false, true)
     local callback = function()
       if state ~= current or vim.api.nvim_get_current_buf() ~= buf then return end
-      if key == '<Esc>' then M.stop(); return end
+      if exits[key] then M.stop(); return end
       local ok, err = pcall(function()
         local method = actions[key][1]
         require('hodocode')[method]()
@@ -87,10 +95,10 @@ function M.start()
   vim.api.nvim_create_autocmd('VimLeavePre', { group = current.group, callback = M.stop })
   vim.api.nvim_create_autocmd('VimResized', { group = current.group, callback = function()
     if current.guide and vim.api.nvim_win_is_valid(current.guide) then
-      local width = math.max(1, math.min(78, vim.o.columns - 4))
+      local width = math.max(1, math.min(90, vim.o.columns - 4))
       vim.api.nvim_win_set_config(current.guide, {
-        relative = 'editor', row = math.max(0, vim.o.lines - vim.o.cmdheight - 6),
-        col = math.max(0, vim.o.columns - width - 2), width = width, height = 3,
+        relative = 'editor', row = math.max(0, vim.o.lines - vim.o.cmdheight - 7),
+        col = math.max(0, vim.o.columns - width - 2), width = width, height = 4,
       })
     end
   end })

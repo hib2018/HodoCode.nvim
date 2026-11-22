@@ -91,6 +91,7 @@ local function native(controller)
     if n then controller.state.selected = n end
     controller.closed = true
   end })
+  for _, key in ipairs({ 't', '<Esc>' }) do vim.keymap.set('n', key, function() controller:close() end, { buffer = buf }) end
   for key, action in pairs({ ['<Space>'] = 'toggle', ['<Tab>'] = 'toggle', ['<CR>'] = 'jump', o = 'jump', h = 'collapse', l = 'expand' }) do
     vim.keymap.set('n', key, function() controller:act(action, current()) end, { buffer = buf })
   end
@@ -120,9 +121,13 @@ local function snacks(controller, picker)
   end
   local keys = {
     ['<Space>'] = 'tree_toggle', ['<Tab>'] = 'tree_toggle', h = 'tree_collapse', l = 'tree_expand',
-    o = 'confirm', q = 'close', ['<Esc>'] = 'close',
+    o = 'confirm', q = 'close', t = 'close', ['<Esc>'] = 'close',
+    ['<C-c>'] = 'exit_reader', ['<C-d>'] = 'exit_reader',
   }
-  local actions = {}
+  local actions = { exit_reader = function()
+    controller:close()
+    require('hodocode.mode').stop()
+  end }
   for name, action in pairs({ tree_toggle = 'toggle', tree_expand = 'expand', tree_collapse = 'collapse' }) do
     actions[name] = function(p, item) controller:act(action, (item or p:current() or {}).node) end
   end
