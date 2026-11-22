@@ -9,9 +9,11 @@ test: build
 	nvim --headless -u NONE -l tests/edges.lua
 	nvim --headless -u NONE -l tests/errors.lua
 	nvim --headless -u NONE -l tests/mode.lua
+	nvim --headless -u NONE -l tests/mode_navigation.lua
 	nvim --headless -u NONE -l tests/marker.lua
 	nvim --headless -u NONE -l tests/reader_keys.lua
 	nvim --headless -u NONE -l tests/reader_history.lua
+	nvim --headless -u NONE -l tests/popup.lua
 	nvim --headless -u NONE -l tests/navigation.lua
 	nvim --headless -u NONE -l tests/tree.lua
 	nvim --headless -u NONE -l tests/ai_trial.lua

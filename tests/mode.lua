@@ -66,7 +66,7 @@ local function run()
       assert(actual[field] == expected[field], label .. ': changed mapping field ' .. field)
     end
   end
-  local keys = { 'f', 'c', 's', 'r', 'a', 'x', 'd', 'g', 'G', 't', 'e', 'i', 'E', 'v', 'z', 'K', 'm', 'n', 'N', 'b', '[', ']', 'q', '<C-c>', '<C-d>', '<CR>', '<Esc>' }
+  local keys = { 'f', 'c', 's', 'r', 'a', 'x', 'd', 'g', 'G', 't', 'e', 'i', 'E', 'v', 'z', 'K', 'm', 'n', 'N', 'b', '[', ']', '?', 'q', '<C-c>', '<C-d>', '<CR>', '<Esc>' }
   local local_calls, global_calls = 0, 0
   local local_callback = function() local_calls = local_calls + 1 end
   local global_callback = function() global_calls = global_calls + 1 end
