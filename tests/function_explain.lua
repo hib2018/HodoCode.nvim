@@ -74,6 +74,13 @@ json.dump(dict(version=b['version'],message='関数の説明',comments=[dict(fil
   hc.explain('Explain only this function')
   wait(function() return #marks() == 1 end, 'function-only adapter request and UTF8 response')
   assert(starts == 1 and marks()[1][2] == 8, 'relative line 2 must map to actual function line 9')
+  local function virtual_text()
+    return vim.api.nvim_buf_get_extmarks(source, ns, 0, -1, { details = true })[1][4].virt_text[1][1]
+  end
+  assert(virtual_text() == '  🤖 日本語の解説 UTF8 detail', 'missing robot prefix on explanation')
+  assert(explain.toggle() and #marks() == 0)
+  assert(explain.toggle() and #marks() == 1)
+  assert(virtual_text() == '  🤖 日本語の解説 UTF8 detail', 'toggle lost or duplicated robot prefix')
   cursor(10)
   assert(explain.show(), 'relative end_line must also map to the buffer')
   assert(table.concat(vim.api.nvim_buf_get_lines(0, 0, -1, false), '\n'):find('UTF8 detail', 1, true))

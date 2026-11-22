@@ -38,7 +38,7 @@ local function render(record)
     local summary = comment.text:gsub('%c', ' '):gsub('%s+', ' ')
     summary = vim.fn.strcharpart(summary, 0, 160)
     vim.api.nvim_buf_set_extmark(buf, ns, comment.line - 1, 0, {
-      virt_text = { { '  ' .. summary, 'Comment' } }, virt_text_pos = 'eol',
+      virt_text = { { '  🤖 ' .. summary, 'Comment' } }, virt_text_pos = 'eol',
     })
   end
 end
