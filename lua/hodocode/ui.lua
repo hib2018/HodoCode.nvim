@@ -30,20 +30,27 @@ function M.float(lines, title, context)
   return buf, win
 end
 
-function M.jump(root, f)
-  if not f or not f.File or not f.Line then return end
+function M.target(root, f)
+  if not f or not f.File or not f.Line then return nil, '移動先の定義がありません' end
   local path = vim.fs.normalize(root .. '/' .. f.File)
   local real = (vim.uv or vim.loop).fs_realpath(path)
   local base = (vim.uv or vim.loop).fs_realpath(root)
   if not real or not base or real:sub(1, #base + 1) ~= base .. '/' then
-    vim.notify('HodoCode: project outside target rejected', vim.log.levels.ERROR)
-    return
+    return nil, 'project outside target rejected'
   end
   for _, buf in ipairs(vim.api.nvim_list_bufs()) do
     if vim.bo[buf].modified and (vim.uv or vim.loop).fs_realpath(vim.api.nvim_buf_get_name(buf)) == real then
-      vim.notify('HodoCode: 移動先に未保存の変更があります。保存して再解析してください', vim.log.levels.ERROR)
-      return
+      return nil, '移動先に未保存の変更があります。保存して再解析してください'
     end
+  end
+  return real
+end
+
+function M.jump(root, f)
+  local real, err = M.target(root, f)
+  if not real then
+    vim.notify('HodoCode: ' .. err, vim.log.levels.ERROR)
+    return
   end
   vim.cmd("normal! m'")
   if (vim.uv or vim.loop).fs_realpath(vim.api.nvim_buf_get_name(0)) ~= real then
