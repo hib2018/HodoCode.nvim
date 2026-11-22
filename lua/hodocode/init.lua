@@ -106,7 +106,10 @@ function M.functions()
       vim.ui.select(functions, { prompt = 'HodoCode 関数', format_item = function(f)
         return f.ID .. '  ' .. f.File .. ':' .. f.Line
       end }, function(f)
-        if f and ctx.valid() then require('hodocode.ui').jump(ctx.root, f) end
+        if f and ctx.valid() and vim.api.nvim_win_is_valid(ctx.win) and vim.api.nvim_win_get_buf(ctx.win) == ctx.buf then
+          vim.api.nvim_set_current_win(ctx.win)
+          require('hodocode.ui').jump(ctx.root, f)
+        end
       end)
     end))
   end)

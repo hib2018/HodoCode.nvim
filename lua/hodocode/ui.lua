@@ -1,4 +1,22 @@
 local M = {}
+local history, floats = {}, {}
+
+function M.scroll(delta)
+  if delta == 0 then return false end
+  local win = vim.api.nvim_get_current_win()
+  if not vim.tbl_contains(floats, win) then
+    win = nil
+    for i = #floats, 1, -1 do
+      if vim.api.nvim_win_is_valid(floats[i]) then win = floats[i]; break end
+    end
+  end
+  if not win or not vim.api.nvim_win_is_valid(win) then return false end
+  vim.api.nvim_win_call(win, function()
+    local key = delta < 0 and '<C-y>' or '<C-e>'
+    vim.cmd('normal! ' .. math.abs(delta) .. vim.api.nvim_replace_termcodes(key, true, false, true))
+  end)
+  return true
+end
 
 function M.float(lines, title, context)
   local buf = vim.api.nvim_create_buf(false, true)
@@ -26,7 +44,20 @@ function M.float(lines, title, context)
       pcall(vim.api.nvim_del_autocmd, watch)
     end })
   end
-  vim.keymap.set('n', 'q', function() if vim.api.nvim_win_is_valid(win) then vim.api.nvim_win_close(win, true) end end, { buffer = buf })
+  floats[#floats + 1] = win
+  vim.api.nvim_create_autocmd('WinClosed', { pattern = tostring(win), once = true, callback = function()
+    for i, owned in ipairs(floats) do
+      if owned == win then table.remove(floats, i); break end
+    end
+  end })
+  for _, key in ipairs({ 'q', '<C-c>', '<C-d>' }) do
+    vim.keymap.set('n', key, function()
+      if vim.api.nvim_win_is_valid(win) then vim.api.nvim_win_close(win, true) end
+      if key ~= 'q' then require('hodocode.mode').stop() end
+    end, { buffer = buf })
+  end
+  vim.keymap.set('n', '[', function() M.scroll(-1) end, { buffer = buf })
+  vim.keymap.set('n', ']', function() M.scroll(1) end, { buffer = buf })
   return buf, win
 end
 
@@ -50,13 +81,54 @@ function M.jump(root, f)
   local real, err = M.target(root, f)
   if not real then
     vim.notify('HodoCode: ' .. err, vim.log.levels.ERROR)
-    return
+    return false
   end
-  vim.cmd("normal! m'")
-  if (vim.uv or vim.loop).fs_realpath(vim.api.nvim_buf_get_name(0)) ~= real then
-    vim.cmd.edit(vim.fn.fnameescape(real))
+  local mode = require('hodocode.mode')
+  local active = mode.active()
+  local previous = { buf = vim.api.nvim_get_current_buf(), path = vim.api.nvim_buf_get_name(0), view = vim.fn.winsaveview() }
+  local source = previous.path ~= '' and vim.bo.buftype == '' and vim.api.nvim_win_get_config(0).relative == ''
+  local ok, failure = pcall(function()
+    vim.cmd("normal! m'")
+    if (vim.uv or vim.loop).fs_realpath(vim.api.nvim_buf_get_name(0)) ~= real then
+      vim.cmd.edit(vim.fn.fnameescape(real))
+    end
+    vim.api.nvim_win_set_cursor(0, { f.Line, 0 })
+  end)
+  if active then mode.start() end
+  if not ok then
+    vim.notify('HodoCode: ' .. tostring(failure), vim.log.levels.ERROR)
+    return false
   end
-  vim.api.nvim_win_set_cursor(0, { f.Line, 0 })
+  if source then history[#history + 1] = previous end
+  return true
+end
+
+function M.back()
+  local mode = require('hodocode.mode')
+  local active = mode.active()
+  for i = #history, 1, -1 do
+    local saved = history[i]
+    local buf = saved.buf
+    if not vim.api.nvim_buf_is_valid(buf) or vim.api.nvim_buf_get_name(buf) ~= saved.path then
+      buf = nil
+      if saved.path ~= '' and vim.fn.filereadable(saved.path) == 1 then buf = vim.fn.bufadd(saved.path) end
+    end
+    if buf then
+      local ok, err = pcall(function()
+        vim.cmd("normal! m'")
+        if vim.api.nvim_get_current_buf() ~= buf then vim.cmd.buffer(buf) end
+        vim.fn.winrestview(saved.view)
+      end)
+      if active then mode.start() end
+      if not ok then
+        vim.notify('HodoCode: ' .. tostring(err), vim.log.levels.ERROR)
+        return false
+      end
+      for j = #history, i, -1 do history[j] = nil end
+      return true
+    end
+  end
+  return false
 end
 
 return M
