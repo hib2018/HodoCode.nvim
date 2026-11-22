@@ -18,5 +18,6 @@ test: build
 	nvim --headless -u NONE -l tests/tree.lua
 	nvim --headless -u NONE -l tests/ai_trial.lua
 	nvim --headless -u NONE -l tests/function_explain.lua
+	nvim --headless -u NONE -l tests/line_explain.lua
 	nvim --headless -u NONE -l tests/trial_demo.lua
 	nvim --headless -u NONE -l tests/snacks_integration.lua
