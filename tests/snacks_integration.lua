@@ -91,8 +91,10 @@ local function run()
   check(mode.active(), 'hc.mode did not activate')
   local marker_ns = vim.api.nvim_create_namespace('HodoCodeFunction')
   local function markers() return vim.api.nvim_buf_get_extmarks(source, marker_ns, 0, -1, { details = true }) end
-  wait(function() return #markers() == 1 end, 'mode function marker before picker')
-  check(markers()[1][2] == 5 and markers()[1][4].end_row == 6, 'marker does not cover main function')
+  wait(function() return #markers() == 4 end, 'all jumpable name markers before picker')
+  for _, mark in ipairs(markers()) do
+    check(mark[2] == mark[4].end_row and not mark[4].hl_eol, 'marker covers a function range instead of a call name')
+  end
   check(vim.deep_equal(vim.fn.maparg('h', 'n', false, true), h_before), 'mode remapped source h')
   vim.cmd('normal h')
   check(vim.api.nvim_win_get_cursor(source_win)[2] == 11, 'normal source h movement changed')
@@ -100,7 +102,7 @@ local function run()
   local tree_win = vim.api.nvim_get_current_win()
   check(vim.api.nvim_win_get_width(tree_win) >= math.floor(vim.o.columns * 0.85), 'Snacks tree width was capped by select preset')
   check(vim.api.nvim_win_get_height(tree_win) >= math.floor(vim.o.lines * 0.7), 'Snacks tree height is too small')
-  check(#markers() == 1, 'opening Snacks removed the source function marker')
+  check(#markers() == 4, 'opening Snacks removed the source call-name markers')
   local root = p:items()[1].node
   check(root.id == 'example.test/snacks.main' and p:current().node == root, 'current function root not selected')
   local branch = select_node(p, 'branch')
