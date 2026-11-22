@@ -103,8 +103,17 @@ local function run()
   check(vim.api.nvim_win_get_cursor(source_win)[2] == 11, 'normal source h movement changed')
   local p = open_tree()
   local tree_win = vim.api.nvim_get_current_win()
-  check(vim.api.nvim_win_get_width(tree_win) >= math.floor(vim.o.columns * 0.85), 'Snacks tree width was capped by select preset')
-  check(vim.api.nvim_win_get_height(tree_win) >= math.floor(vim.o.lines * 0.7), 'Snacks tree height is too small')
+  local function popup_size_matches()
+    local width, height = require('hodocode.ui').popup_size()
+    return vim.api.nvim_win_get_width(tree_win) == width and vim.api.nvim_win_get_height(tree_win) == height
+  end
+  check(p.list.win.win == tree_win, 'focused Snacks window is not the list')
+  check(popup_size_matches(), 'Snacks list dimensions differ from ui.popup_size()')
+  for _, screen in ipairs({ { 100, 32 }, { 140, 45 } }) do
+    vim.o.columns, vim.o.lines = screen[1], screen[2]
+    vim.api.nvim_exec_autocmds('VimResized', {})
+    wait(popup_size_matches, 'Snacks list follows unified popup size after resize')
+  end
   check(#markers() == 8 and #strong_markers() == 4, 'opening Snacks removed source name markers')
   local root = p:items()[1].node
   check(root.id == 'example.test/snacks.main' and p:current().node == root, 'current function root not selected')

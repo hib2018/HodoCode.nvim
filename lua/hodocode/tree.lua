@@ -74,8 +74,6 @@ local function native(controller)
     vim.bo[buf].modifiable = true
     vim.api.nvim_buf_set_lines(buf, 0, -1, false, lines)
     vim.bo[buf].modifiable = false
-    local height = math.max(1, math.min(#lines, math.floor(vim.o.lines * 0.7)))
-    vim.api.nvim_win_set_height(win, height)
     vim.api.nvim_win_set_cursor(win, { selected, 0 })
   end
   local function current()
@@ -138,7 +136,11 @@ local function snacks(controller, picker)
     sort = { fields = { 'idx' } },
     matcher = { sort_empty = false },
     layout = { preset = 'select', hidden = { 'input', 'preview' },
-      layout = { width = 0.9, height = 0.8, min_width = 1, max_width = math.huge } },
+      layout = {
+        width = function() return require('hodocode.ui').popup_size() end,
+        height = function() local _, height = require('hodocode.ui').popup_size(); return height end,
+        min_width = 1, min_height = 1, max_width = math.huge,
+      } },
     focus = 'list', show_delay = 0, actions = actions,
     win = { list = { keys = keys } },
     confirm = function(p, item) controller:act('jump', (item or p:current() or {}).node) end,

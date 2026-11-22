@@ -59,11 +59,8 @@ function M.open(config)
     for i, arg in ipairs(argv) do if arg == '{context}' then argv[i] = file end end
     state.buf = vim.api.nvim_create_buf(false, true)
     vim.bo[state.buf].bufhidden = 'wipe'
-    local width = math.max(1, math.min(100, vim.o.columns - 4))
-    local height = math.max(1, math.min(30, vim.o.lines - 4))
-    state.win = vim.api.nvim_open_win(state.buf, true, { relative = 'editor', style = 'minimal', border = 'rounded',
-      title = 'Chat (frozen snapshot ' .. ctx.version:sub(1, 12) .. '; read-only trial)', width = width, height = height,
-      row = math.max(0, math.floor((vim.o.lines - height) / 2) - 1), col = math.max(0, math.floor((vim.o.columns - width) / 2)) })
+    state.win = require('hodocode.ui').open_popup(state.buf,
+      'Chat (frozen snapshot ' .. ctx.version:sub(1, 12) .. '; read-only trial)')
     -- A private cwd discourages indexing; this is not a sandbox. The CLI can still read files.
     local ok, job = pcall(vim.fn.termopen, argv, { cwd = state.dir, on_exit = function()
       vim.schedule(function()
@@ -73,7 +70,7 @@ function M.open(config)
     if not ok or job <= 0 then fail('Chat CLI could not start'); return end
     state.job = job
     vim.keymap.set('n', 'q', M.stop, { buffer = state.buf, nowait = true })
-    vim.api.nvim_create_autocmd('BufWipeout', { buffer = state.buf, once = true, callback = function()
+    vim.api.nvim_create_autocmd('BufWipeout', { buffer = state.buf, once = true, nested = true, callback = function()
       if active == state then M.stop() end
     end })
     vim.api.nvim_create_autocmd('WinClosed', { pattern = tostring(state.win), once = true, callback = function()

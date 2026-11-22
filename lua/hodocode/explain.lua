@@ -22,7 +22,7 @@ end
 
 local group = vim.api.nvim_create_augroup('HodoCodeExplain', { clear = true })
 vim.api.nvim_create_autocmd({ 'TextChanged', 'TextChangedI', 'BufWritePost', 'BufWipeout', 'BufEnter', 'CursorMoved', 'CursorHold' }, {
-  group = group, callback = function(event)
+  group = group, nested = true, callback = function(event)
     local invalidating = event.event == 'TextChanged' or event.event == 'TextChangedI'
       or event.event == 'BufWritePost' or event.event == 'BufWipeout'
     if records[event.buf] and (invalidating or not records[event.buf].ctx.valid()) then clear(event.buf) end

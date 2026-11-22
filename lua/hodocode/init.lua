@@ -296,7 +296,7 @@ function M.setup(options)
   assert(type(M.config.excludes) == 'table', 'excludes must be a list')
   for _, pattern in ipairs(M.config.excludes) do assert(type(pattern) == 'string', 'excludes must contain strings') end
   local group = vim.api.nvim_create_augroup('HodoCode', { clear = true })
-  vim.api.nvim_create_autocmd('BufWritePost', { group = group, callback = function()
+  vim.api.nvim_create_autocmd('BufWritePost', { group = group, nested = true, callback = function()
     require('hodocode.tree').clear()
     require('hodocode.client').stop_all()
   end })

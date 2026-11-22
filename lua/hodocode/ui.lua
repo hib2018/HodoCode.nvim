@@ -1,6 +1,31 @@
 local M = {}
 local history, floats = {}, {}
 
+function M.popup_size()
+  return math.max(1, math.min(math.floor(vim.o.columns * 0.9), vim.o.columns - 4)),
+    math.max(1, math.min(math.floor(vim.o.lines * 0.8), vim.o.lines - 4))
+end
+
+local function popup_config(title)
+  local width, height = M.popup_size()
+  return {
+    relative = 'editor', row = math.max(0, math.floor((vim.o.lines - height) / 2) - 1),
+    col = math.max(0, math.floor((vim.o.columns - width) / 2)), width = width, height = height,
+    style = 'minimal', border = 'rounded', title = ' ' .. title .. ' ',
+  }
+end
+
+function M.open_popup(buf, title)
+  local win = vim.api.nvim_open_win(buf, true, popup_config(title))
+  local resize = vim.api.nvim_create_autocmd('VimResized', { callback = function()
+    if vim.api.nvim_win_is_valid(win) then vim.api.nvim_win_set_config(win, popup_config(title)) end
+  end })
+  vim.api.nvim_create_autocmd('WinClosed', { pattern = tostring(win), once = true, callback = function()
+    vim.api.nvim_del_autocmd(resize)
+  end })
+  return win
+end
+
 function M.scroll(delta)
   if delta == 0 then return false end
   local win = vim.api.nvim_get_current_win()
@@ -24,17 +49,11 @@ function M.float(lines, title, context)
   vim.bo[buf].filetype = 'markdown'
   vim.api.nvim_buf_set_lines(buf, 0, -1, false, lines)
   vim.bo[buf].modifiable = false
-  local width = math.max(1, math.min(100, vim.o.columns - 4))
-  local height = math.max(1, math.min(#lines, math.floor(vim.o.lines * 0.7)))
-  local win = vim.api.nvim_open_win(buf, true, {
-    relative = 'editor', row = math.max(0, math.floor((vim.o.lines - height) / 2) - 1),
-    col = math.max(0, math.floor((vim.o.columns - width) / 2)), width = width,
-    height = height, style = 'minimal', border = 'rounded', title = ' ' .. title .. ' ',
-  })
+  local win = M.open_popup(buf, title)
   vim.wo[win].wrap = true
   if context then
     local watch = vim.api.nvim_create_autocmd({ 'TextChanged', 'TextChangedI', 'BufWritePost', 'BufReadPost', 'BufDelete' }, {
-      buffer = context.buf, callback = function(event)
+      buffer = context.buf, nested = true, callback = function(event)
         if (event.event == 'BufDelete' or not context.valid()) and vim.api.nvim_win_is_valid(win) then
           vim.api.nvim_win_close(win, true)
         end
