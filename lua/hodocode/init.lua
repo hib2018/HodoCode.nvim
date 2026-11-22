@@ -209,7 +209,7 @@ function M.diff()
 end
 
 function M.explain(prompt)
-  require('hodocode.explain').run(M.config, prompt)
+  require('hodocode.explain').run(M.config, prompt, vim.api.nvim_win_get_cursor(0)[1])
 end
 
 function M.chat()
@@ -263,7 +263,7 @@ function M.help_down()
 end
 
 function M.explain_now()
-  M.explain('Explain this buffer line by line. Read-only; do not modify files.')
+  M.explain('Explain this function line by line. Read-only; do not modify files.')
 end
 
 function M.mode()

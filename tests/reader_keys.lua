@@ -183,7 +183,7 @@ local function run()
   vim.ui.select = function() error('E must not ask for confirmation') end
   invoke('E')
   explain.run, vim.ui.input, vim.ui.select = explain_run, input, select
-  assert(prompt == 'Explain this buffer line by line. Read-only; do not modify files.',
+  assert(prompt == 'Explain this function line by line. Read-only; do not modify files.',
     'E must send the canned read-only explain prompt immediately')
   assert(vim.api.nvim_buf_get_changedtick(source) == tick and not vim.bo[source].modified, 'reader actions changed source')
   assert(vim.deep_equal(vim.fn.readfile(root .. '/main.go'), original), 'reader actions changed source on disk')

@@ -90,6 +90,7 @@ function M.system(state, argv, options, limit, callback, prepare_errors)
           { 'exceeds', 'Prepare size limit exceeded (source/prepared JSON: 128 KiB)' },
           { 'exclude', 'Invalid excludes; use project-relative glob patterns' },
           { 'redact:', 'Source masking failed; check source syntax' },
+          { 'no function at cursor', 'カーソル位置に関数がありません。関数内で実行してください' },
         }
         for _, entry in ipairs(diagnostics) do
           if stderr:find(entry[1], 1, true) then reason = entry[2]; break end
@@ -131,10 +132,10 @@ function M.cancel(state)
   return true
 end
 
-function M.run(state, config, ctx, purpose, callback)
+function M.run(state, config, ctx, purpose, callback, row)
   if not M.argv(config.backend) then callback(nil, 'backend must be an argv list'); return end
   local payload = vim.json.encode({ file = ctx.file, content = ctx.content, purpose = purpose,
-    excludes = config.excludes or {} })
+    excludes = config.excludes or {}, row = row })
   if #purpose > 8192 or #payload > 1024 * 1024 then callback(nil, 'prepare request exceeds size limit'); return end
   local argv = vim.deepcopy(config.backend)
   vim.list_extend(argv, { 'prepare-buffer', '--root', ctx.root })
@@ -150,6 +151,17 @@ function M.run(state, config, ctx, purpose, callback)
       end
       local envelope = { prompt = purpose, buffer = { file = result.file, path = result.file,
         content = result.content, version = result.version, language = result.language } }
+      if row then
+        local first, last = result.start_line, result.end_line
+        if type(first) ~= 'number' or type(last) ~= 'number' or first ~= math.floor(first) or last ~= math.floor(last)
+          or first < 1 or first > row or last < row or last > ctx.count then
+          callback(nil, 'Invalid function scope; rebuild the HodoCode backend'); return
+        end
+        local lines = vim.split(result.content, '\n', { plain = true })
+        if #lines < last then callback(nil, 'Invalid function scope'); return end
+        envelope.buffer.content = table.concat(vim.list_slice(lines, first, last), '\n')
+        envelope.buffer.start_line, envelope.buffer.end_line = first, last
+      end
       local encoded = vim.json.encode(envelope)
       if #encoded > math.min(config.max_agent_bytes or 131072, 131072) then
         callback(nil, 'Prepared context exceeds size limit'); return

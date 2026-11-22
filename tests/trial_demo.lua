@@ -19,13 +19,15 @@ local function run()
     assert(vim.wait(10000, test, 10), label .. '\n' .. table.concat(notices, '\n'))
   end
   local function marks() return vim.api.nvim_buf_get_extmarks(source, ns, 0, -1, {}) end
+  vim.api.nvim_win_set_cursor(0, { 3, 0 })
   hc.explain('デモ')
   wait(function() return #marks() > 0 end, 'demo line explanations')
-  assert(#marks() == 2 and vim.bo[source].modified, 'demo must annotate code only, without writes')
+  assert(#marks() == 1 and marks()[1][2] == 2 and vim.bo[source].modified,
+    'demo must annotate only the cursor function, without writes')
   hc.notes_toggle()
   assert(#marks() == 0)
   hc.notes_toggle()
-  assert(#marks() == 2)
+  assert(#marks() == 1 and marks()[1][2] == 2)
   hc.notes_show()
   assert(table.concat(vim.api.nvim_buf_get_lines(0, 0, -1, false)):find('AIへは送信していません', 1, true))
   vim.api.nvim_win_close(0, true)

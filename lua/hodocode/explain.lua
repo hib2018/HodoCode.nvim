@@ -75,16 +75,17 @@ end
 local function valid_response(response, ctx)
   if type(response) ~= 'table' or response.version ~= ctx.version or type(response.message) ~= 'string'
     or type(response.comments) ~= 'table' or not vim.islist(response.comments) then return false end
+  local count = ctx.start_line and ctx.end_line - ctx.start_line + 1 or ctx.count
   for _, c in ipairs(response.comments) do
     if type(c) ~= 'table' or c.file ~= ctx.file or type(c.text) ~= 'string' or c.text:find('\0', 1, true)
-      or type(c.line) ~= 'number' or c.line ~= math.floor(c.line) or c.line < 1 or c.line > ctx.count
+      or type(c.line) ~= 'number' or c.line ~= math.floor(c.line) or c.line < 1 or c.line > count
       or (c.end_line ~= nil and (type(c.end_line) ~= 'number' or c.end_line ~= math.floor(c.end_line)
-        or c.end_line < c.line or c.end_line > ctx.count)) then return false end
+        or c.end_line < c.line or c.end_line > count)) then return false end
   end
   return not response.message:find('\0', 1, true)
 end
 
-function M.run(config, prompt)
+function M.run(config, prompt, row)
   if active then prep.notify('行解説は実行中です。:HodoCodeCancelで中止できます'); return false end
   if not prep.argv(config.explain_agent) then prep.notify('explain_agent にJSONアダプターのargvを設定してください'); return false end
   local ctx, err = prep.capture(config)
@@ -105,9 +106,11 @@ function M.run(config, prompt)
     if not ctx.valid() or vim.api.nvim_get_current_buf() ~= ctx.buf then finish('対象バッファが変更されました'); return end
     if value == nil then finish(); return end
     if type(value) ~= 'string' then finish('prompt must be a string'); return end
-    if value == '' then value = 'Explain this buffer line by line. Read-only; do not modify files.' end
-    prep.run(state, config, ctx, value, function(_, prepare_err, encoded)
+    if value == '' then value = row and 'Explain this function line by line. Read-only; do not modify files.'
+      or 'Explain this buffer line by line. Read-only; do not modify files.' end
+    prep.run(state, config, ctx, value, function(envelope, prepare_err, encoded)
       if prepare_err then finish(prepare_err); return end
+      ctx.start_line, ctx.end_line = envelope.buffer.start_line, envelope.buffer.end_line
       state.cwd = prep.tempdir()
       if not state.cwd then finish('Private explanation cwd could not be created'); return end
       -- This discourages automatic indexing, but adapters are not sandboxed.
@@ -117,12 +120,18 @@ function M.run(config, prompt)
         if agent_err then prep.notify(agent_err); return end
         if not ctx.valid() then prep.notify('ソースが変更されました。解説を破棄しました'); return end
         if not valid_response(response, ctx) then prep.notify('Invalid explanation response'); return end
+        if ctx.start_line then
+          for _, comment in ipairs(response.comments) do
+            comment.line = comment.line + ctx.start_line - 1
+            if comment.end_line then comment.end_line = comment.end_line + ctx.start_line - 1 end
+          end
+        end
         clear(ctx.buf)
         local record = { ctx = ctx, response = response }
         records[ctx.buf] = record
         render(record)
       end)
-    end)
+    end, row)
   end)
   if prompt == nil or prompt == '' then
     prep.guard(state, function() vim.ui.input({ prompt = 'HodoCode 行解説への指示: ' }, send) end)()
