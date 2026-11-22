@@ -64,7 +64,11 @@ end
 
 function M.start(buf, group)
   M.stop()
-  vim.api.nvim_set_hl(0, 'HodoCodeFunction', { default = true, link = 'Visual' })
+  vim.api.nvim_set_hl(0, 'HodoCodeFunctionName', { default = true, underline = true })
+  vim.api.nvim_set_hl(0, 'HodoCodeFunction', {
+    default = true, fg = '#1c1c1c', bg = '#ffd75f', bold = true, underline = true,
+    ctermfg = 234, ctermbg = 221,
+  })
   local current = { buf = buf, generation = 0, ranges = {} }
   active = current
   local function clear()
@@ -74,25 +78,32 @@ function M.start(buf, group)
     if active ~= current then return end
     clear()
     if not current.ctx or not current.ctx.valid() then return end
-    local targets, seen = {}, {}
+    local targets, names = {}, {}
+    local function add(site, highlight)
+      names[table.concat({ site.Line, site.Column, site.EndColumn }, ':')] = { site = site, highlight = highlight }
+    end
+    for _, site in ipairs(current.names or {}) do add(site, 'HodoCodeFunctionName') end
+    for _, sites in pairs(current.calls or {}) do
+      for _, site in ipairs(sites) do add(site, 'HodoCodeFunctionName') end
+    end
     for _, entry in ipairs(current.ranges) do
       local site, target = entry.site, entry.target
       if targets[site.To] == nil then targets[site.To] = require('hodocode.ui').target(current.ctx.root, target) or false end
-      local key = table.concat({ site.Line, site.Column, site.EndColumn }, ':')
-      if targets[site.To] and not seen[key] then
-        seen[key] = true
-        vim.api.nvim_buf_set_extmark(buf, ns, site.Line - 1, site.Column - 1, {
-          end_row = site.Line - 1, end_col = site.EndColumn - 1,
-          hl_group = 'HodoCodeFunction', priority = 150,
-        })
-      end
+      if targets[site.To] then add(site, 'HodoCodeFunction') end
+    end
+    for _, entry in pairs(names) do
+      local site = entry.site
+      vim.api.nvim_buf_set_extmark(buf, ns, site.Line - 1, site.Column - 1, {
+        end_row = site.Line - 1, end_col = site.EndColumn - 1,
+        hl_group = entry.highlight, priority = entry.highlight == 'HodoCodeFunction' and 150 or 140,
+      })
     end
   end
   local function refresh()
     if active ~= current or vim.api.nvim_get_current_buf() ~= buf then return end
     current.generation = current.generation + 1
     local generation = current.generation
-    current.ctx, current.ranges, current.loading, current.calls = nil, {}, false, {}
+    current.ctx, current.ranges, current.names, current.loading, current.calls = nil, {}, {}, false, {}
     clear()
     local hc = require('hodocode')
     local ok, ctx = pcall(hc.context)
@@ -156,6 +167,17 @@ function M.start(buf, group)
               end)
             end
           end
+          client:request('function-names', { file = ctx.file }, function(names, names_err)
+            if names_err or not valid() then return end
+            current.names = {}
+            for _, site in ipairs(names) do
+              local line = lines[site.Line]
+              if line and site.Column >= 1 and site.EndColumn > site.Column and site.EndColumn <= #line + 1 then
+                current.names[#current.names + 1] = site
+              end
+            end
+            update()
+          end)
         end)
       end)
     end)
@@ -167,7 +189,7 @@ function M.start(buf, group)
   vim.api.nvim_create_autocmd({ 'TextChanged', 'TextChangedI', 'BufWritePost', 'BufReadPost', 'BufFilePost' }, {
     group = group, buffer = buf, callback = function()
       current.generation = current.generation + 1
-      current.ctx, current.ranges, current.loading, current.calls = nil, {}, false, {}
+      current.ctx, current.ranges, current.names, current.loading, current.calls = nil, {}, {}, false, {}
       clear()
       vim.schedule(refresh)
     end,

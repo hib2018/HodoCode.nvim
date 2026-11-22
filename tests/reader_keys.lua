@@ -63,6 +63,9 @@ local function run()
   local last = { 8, column(8, 'leaf') }
   local ns = vim.api.nvim_create_namespace('HodoCodeFunction')
   local function marks() return vim.api.nvim_buf_get_extmarks(source, ns, 0, -1, { details = true }) end
+  local function strong_marks()
+    return vim.tbl_filter(function(mark) return mark[4].hl_group == 'HodoCodeFunction' end, marks())
+  end
 
   -- Observe the real backend, keeping its responses and all navigation code intact.
   local client = clients.start(root, hc.config)
@@ -110,8 +113,8 @@ local function run()
   end
   assert(vim.deep_equal(names, { 'leaf', 'leaf', '日本語', 'Println', 'f', 'leaf' }), 'backend byte positions/name order: ' .. vim.inspect(names))
   assert(first_result.calls[5].Unknown, 'fixture function variable must remain unresolved')
-  assert(#marks() == 5, 'source markers must still exclude unresolved/external calls')
-  for _, mark in ipairs(marks()) do
+  assert(#marks() == 13 and #strong_marks() == 5, 'all names must be marked, only proven targets strongly')
+  for _, mark in ipairs(strong_marks()) do
     local name = original[mark[2] + 1]:sub(mark[3] + 1, mark[4].end_col)
     assert(name == 'leaf' or name == '日本語', 'navigation broadened proven-jumpable source markers: ' .. name)
   end
