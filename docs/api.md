@@ -44,7 +44,9 @@ bin/hodocode prepare-buffer --root /absolute/project
 {"file":"main.go","content":"package main\n// secret\n","purpose":"Explain this buffer","excludes":["private","*.secret.go"]}
 ```
 
-応答フィールドは`file/language/content/purpose/version/line_count`。`content`は全文を対象に既存のGo・多言語マスキングで文字列・コメントを空白化したもの。`version`は**元全文のUTF-8バイト列**のSHA-256（小文字hex）。`line_count`はLF個数+1で、末尾LF後の空行も数える。行注釈を受け取る側では、別途実際のバッファ行数を上限に検証する。
+入力に任意の`row`（1始まりのカーソル行）を指定すると、その行を含む最小の関数を未保存の入力ソースから特定し、応答に`start_line/end_line`（1始まり・両端含む）を追加する。関数外ならエラーになり、全文へのフォールバックはしない。`go.mod`・LSPは不要。`content`は引き続き全文のマスク結果であり、Neovim側でこの行範囲だけ切り出して行解説アダプターへ送信する。
+
+応答フィールドは`file/language/content/purpose/version/line_count`（`row`指定時は`start_line/end_line`も含む）。`content`は全文を対象に既存のGo・多言語マスキングで文字列・コメントを空白化したもの。`version`は**元全文のUTF-8バイト列**のSHA-256（小文字hex）。`line_count`はLF個数+1で、末尾LF後の空行も数える。行注釈を受け取る側では、別途実際のバッファ行数を上限に検証する。
 
 プロジェクト相対パス、既存の機密パス除外と指定`excludes`、UTF-8・NULを検査する。ルートを正規化した後、その配下のシンボリックリンクはルート内を指すものも含めて拒否する。入力JSON上限1MiB、元ソースとコンパクトな応答JSONは各128KiB、`purpose`は非空で8KiB以内。stdoutにはJSON後のLFが1バイト加わる。マスキング不能な曖昧な構文は送信せずエラーにする。
 

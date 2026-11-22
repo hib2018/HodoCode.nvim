@@ -22,6 +22,8 @@ type Buffer struct {
 	Purpose   string `json:"purpose"`
 	Version   string `json:"version"`
 	LineCount int    `json:"line_count"`
+	StartLine int    `json:"start_line,omitempty"`
+	EndLine   int    `json:"end_line,omitempty"`
 }
 
 // PrepareBuffer masks supplied source without reading or analyzing source files.
@@ -100,12 +102,35 @@ func PrepareBuffer(root, file, content, purpose string, excludes []string) (*Buf
 	}
 	sum := sha256.Sum256([]byte(content))
 	result := &Buffer{File: file, Language: language, Content: clean, Purpose: purpose, Version: hex.EncodeToString(sum[:]), LineCount: 1 + strings.Count(content, "\n")}
-	encoded, err := json.Marshal(result)
+	if err := checkBufferSize(result); err != nil {
+		return nil, err
+	}
+	return result, nil
+}
+
+// PrepareFunctionBuffer preserves the full masked buffer while marking a cursor scope.
+func PrepareFunctionBuffer(root, file, content, purpose string, excludes []string, row int) (*Buffer, error) {
+	result, err := PrepareBuffer(root, file, content, purpose, excludes)
 	if err != nil {
 		return nil, err
 	}
-	if len(encoded) > maxPrompt {
-		return nil, fmt.Errorf("prepared JSON exceeds %d bytes", maxPrompt)
+	result.StartLine, result.EndLine, err = analyze.FunctionRange(result.Language, content, row)
+	if err != nil {
+		return nil, err
+	}
+	if err := checkBufferSize(result); err != nil {
+		return nil, err
 	}
 	return result, nil
+}
+
+func checkBufferSize(result *Buffer) error {
+	encoded, err := json.Marshal(result)
+	if err != nil {
+		return err
+	}
+	if len(encoded) > maxPrompt {
+		return fmt.Errorf("prepared JSON exceeds %d bytes", maxPrompt)
+	}
+	return nil
 }

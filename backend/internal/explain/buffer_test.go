@@ -2,6 +2,7 @@ package explain
 
 import (
 	"crypto/sha256"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -39,6 +40,29 @@ func TestPrepareBufferWholeSource(t *testing.T) {
 				t.Fatalf("wrong metadata: %+v", b)
 			}
 		})
+	}
+}
+
+func TestPrepareFunctionBufferOutputLimit(t *testing.T) {
+	root := t.TempDir()
+	source := "package p\nfunc f() {}\n//"
+	purpose := strings.Repeat("p", maxPurpose)
+	base, err := PrepareBuffer(root, "new.go", source, purpose, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	encoded, _ := json.Marshal(base)
+	source += strings.Repeat("x", maxPrompt-len(encoded))
+	whole, err := PrepareBuffer(root, "new.go", source, purpose, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	encoded, _ = json.Marshal(whole)
+	if len(encoded) != maxPrompt {
+		t.Fatalf("bad boundary fixture: %d", len(encoded))
+	}
+	if result, err := PrepareFunctionBuffer(root, "new.go", source, purpose, nil, 2); result != nil || err == nil || !strings.Contains(err.Error(), "prepared JSON exceeds") {
+		t.Fatalf("scope fields escaped size limit: %+v, %v", result, err)
 	}
 }
 

@@ -19,7 +19,7 @@ func runPrepareBuffer(args []string, in io.Reader, out, stderr io.Writer) error 
 	fs.SetOutput(stderr)
 	root := fs.String("root", ".", "local root (no project analysis or source reads)")
 	fs.Usage = func() {
-		fmt.Fprintln(stderr, "Usage: hodocode prepare-buffer --root PATH\nstdin: JSON {file,content,purpose,excludes?:string[]}\nLimits: input 1048576 bytes; UTF-8 source 131072 bytes; purpose 8192 bytes; prepared JSON 131072 bytes. Masks the whole buffer locally; no AI calls. Symlinks below root are rejected.")
+		fmt.Fprintln(stderr, "Usage: hodocode prepare-buffer --root PATH\nstdin: JSON {file,content,purpose,excludes?:string[],row?:integer}\nLimits: input 1048576 bytes; UTF-8 source 131072 bytes; purpose 8192 bytes; prepared JSON 131072 bytes. Masks the whole buffer locally; optional 1-based row adds the smallest containing function range without slicing content. No AI calls. Symlinks below root are rejected.")
 		fs.PrintDefaults()
 	}
 	if err := fs.Parse(args); err != nil {
@@ -46,6 +46,7 @@ func runPrepareBuffer(args []string, in io.Reader, out, stderr io.Writer) error 
 		Content  *string  `json:"content"`
 		Purpose  string   `json:"purpose"`
 		Excludes []string `json:"excludes"`
+		Row      *int     `json:"row"`
 	}
 	decoder := json.NewDecoder(bytes.NewReader(data))
 	decoder.DisallowUnknownFields()
@@ -59,7 +60,12 @@ func runPrepareBuffer(args []string, in io.Reader, out, stderr io.Writer) error 
 	if request.Content == nil {
 		return fmt.Errorf("content is required")
 	}
-	result, err := explain.PrepareBuffer(*root, request.File, *request.Content, request.Purpose, request.Excludes)
+	var result *explain.Buffer
+	if request.Row != nil {
+		result, err = explain.PrepareFunctionBuffer(*root, request.File, *request.Content, request.Purpose, request.Excludes, *request.Row)
+	} else {
+		result, err = explain.PrepareBuffer(*root, request.File, *request.Content, request.Purpose, request.Excludes)
+	}
 	if err != nil {
 		return err
 	}
