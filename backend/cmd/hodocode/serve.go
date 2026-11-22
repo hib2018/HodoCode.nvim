@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"unicode/utf8"
 
@@ -21,10 +22,14 @@ type serveRequest struct {
 	ID     *int   `json:"id"`
 	Method string `json:"method"`
 	Params struct {
-		Function string `json:"function"`
-		File     string `json:"file"`
-		Row      int    `json:"row"`
-		Column   int    `json:"column"`
+		Function string   `json:"function"`
+		File     string   `json:"file"`
+		Row      int      `json:"row"`
+		Column   int      `json:"column"`
+		Kind     string   `json:"kind"`
+		Dir      string   `json:"dir"`
+		Depth    *int     `json:"depth"`
+		Expand   []string `json:"expand"`
 	} `json:"params"`
 }
 
@@ -38,6 +43,24 @@ type serveCalls struct {
 	Function analyze.Function            `json:"function"`
 	Calls    []analyze.CallSite          `json:"calls"`
 	Targets  map[string]analyze.Function `json:"Targets"`
+}
+
+type serveGraphNode struct {
+	ID    string `json:"id"`
+	Label string `json:"label"`
+}
+
+type serveGraphEdge struct {
+	From    string `json:"from"`
+	To      string `json:"to"`
+	Unknown bool   `json:"unknown,omitempty"`
+}
+
+type serveGraphResult struct {
+	Kind    string           `json:"kind"`
+	Nodes   []serveGraphNode `json:"nodes"`
+	Edges   []serveGraphEdge `json:"edges"`
+	Mermaid string           `json:"mermaid"`
 }
 
 type serveSyntax struct {
@@ -139,6 +162,12 @@ func serveDispatch(ctx context.Context, project **analyze.Project, root, languag
 			}
 		}
 		return result, nil
+	case "graph":
+		result, err := serveGraph(p, req)
+		if err != nil {
+			return nil, err
+		}
+		return result, nil
 	case "syntax":
 		return serveSyntaxAt(root, req.Params.File, req.Params.Row, req.Params.Column)
 	case "reload":
@@ -151,6 +180,50 @@ func serveDispatch(ctx context.Context, project **analyze.Project, root, languag
 	default:
 		return nil, fmt.Errorf("unknown method %q", req.Method)
 	}
+}
+
+func serveGraph(p *analyze.Project, req serveRequest) (serveGraphResult, error) {
+	result := serveGraphResult{Kind: req.Params.Kind, Nodes: []serveGraphNode{}, Edges: []serveGraphEdge{}}
+	var edges []analyze.Edge
+	nodes := map[string]bool{}
+	switch req.Params.Kind {
+	case "deps":
+		depth := -1
+		if req.Params.Depth != nil {
+			depth = *req.Params.Depth
+		}
+		var err error
+		edges, err = p.Dependencies(req.Params.Dir, depth)
+		if err != nil {
+			return serveGraphResult{}, err
+		}
+		result.Mermaid = analyze.Mermaid(edges)
+	case "calls":
+		if req.Params.Function == "" {
+			return serveGraphResult{}, fmt.Errorf("function is required")
+		}
+		s, err := newFlow(p, req.Params.Function, req.Params.Expand)
+		if err != nil {
+			return serveGraphResult{}, err
+		}
+		edges, nodes = s.edges, s.nodes
+		result.Mermaid = s.diagram()
+	default:
+		return serveGraphResult{}, fmt.Errorf("kind must be deps or calls")
+	}
+	for _, edge := range edges {
+		nodes[edge.From], nodes[edge.To] = true, true
+		result.Edges = append(result.Edges, serveGraphEdge{From: edge.From, To: edge.To, Unknown: edge.Unknown})
+	}
+	ids := make([]string, 0, len(nodes))
+	for id := range nodes {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	for _, id := range ids {
+		result.Nodes = append(result.Nodes, serveGraphNode{ID: id, Label: id})
+	}
+	return result, nil
 }
 
 func serveSyntaxAt(root, file string, row, column int) (any, error) {
