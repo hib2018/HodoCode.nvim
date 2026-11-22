@@ -33,11 +33,14 @@ func (s *list) String() string     { return strings.Join(*s, ",") }
 func (s *list) Set(v string) error { *s = append(*s, v); return nil }
 
 func run(ctx context.Context, args []string, in io.Reader, out, stderr io.Writer, runner explain.Runner) error {
+	if len(args) > 0 && args[0] == "prepare-buffer" {
+		return runPrepareBuffer(args[1:], in, out, stderr)
+	}
 	if len(args) > 0 && args[0] == "serve" {
 		return runServe(ctx, args[1:], in, out, stderr)
 	}
 	if len(args) == 0 || args[0] == "help" || args[0] == "--help" || args[0] == "-h" {
-		_, err := fmt.Fprintln(out, "Usage: hodocode <deps|functions|flow|tui|explain|cache|serve> [flags]\nCommon: --language auto|go|zig|ts|rust|c|js|python --root PATH (local) or --repo https://github.com/owner/repo [--ref REF] [--subdir PATH] [--private]\nRemote: --fetch-timeout 2m --max-bytes 104857600 --cache-dir PATH --refresh\ncache: --repo URL --delete [--cache-dir PATH]\nRemote acquisition and static analysis never send code to AI.\ndeps: --dir . --depth -1 (source directory depth)\nflow/tui: --func NAME [--expand NAME ...]\nexplain: --func NAME --purpose TEXT [--exclude PATTERN ...] [--send] [--timeout 2m]\nexplain defaults to a local preview; --send invokes fx twice. Run a command with --help for flags.")
+		_, err := fmt.Fprintln(out, "Usage: hodocode <deps|functions|flow|tui|explain|cache|serve|prepare-buffer> [flags]\nCommon: --language auto|go|zig|ts|rust|c|js|python --root PATH (local) or --repo https://github.com/owner/repo [--ref REF] [--subdir PATH] [--private]\nRemote: --fetch-timeout 2m --max-bytes 104857600 --cache-dir PATH --refresh\ncache: --repo URL --delete [--cache-dir PATH]\nRemote acquisition and static analysis never send code to AI.\ndeps: --dir . --depth -1 (source directory depth)\nflow/tui: --func NAME [--expand NAME ...]\nexplain: --func NAME --purpose TEXT [--exclude PATTERN ...] [--send] [--timeout 2m]\nexplain defaults to a local preview; --send invokes fx twice. Run a command with --help for flags.")
 		return err
 	}
 	command := args[0]
