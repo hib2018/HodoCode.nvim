@@ -10,6 +10,58 @@ function M.stop()
   end
 end
 
+local function context_function()
+  local current = active
+  if not current or vim.api.nvim_get_current_buf() ~= current.buf or not current.ctx or not current.ctx.valid() then
+    vim.notify('HodoCode: 保存済みソースの解析完了後に実行してください', vim.log.levels.WARN)
+    return
+  end
+  local row = vim.api.nvim_win_get_cursor(0)[1]
+  local selected
+  for _, f in ipairs(current.functions or {}) do
+    if f.File == current.ctx.file and f.Line <= row and row <= f.End then
+      if not selected or f.End - f.Line < selected.End - selected.Line then selected = f end
+    end
+  end
+  if not selected then
+    vim.notify('HodoCode: カーソル位置に関数がありません', vim.log.levels.WARN)
+    return
+  end
+  return current, selected
+end
+
+function M.move(delta, count)
+  local current, f = context_function()
+  if not current then return end
+  local sites = current.calls[f.ID]
+  if not sites then vim.notify('HodoCode: 呼び出し箇所を解析中です', vim.log.levels.WARN); return end
+  if #sites == 0 then vim.notify('HodoCode: この関数に呼び出し箇所はありません', vim.log.levels.INFO); return end
+  local cursor = vim.api.nvim_win_get_cursor(0)
+  local index
+  if delta > 0 then
+    for i, site in ipairs(sites) do
+      if site.Line > cursor[1] or (site.Line == cursor[1] and site.Column - 1 > cursor[2]) then index = i; break end
+    end
+    index = math.min(#sites, (index or #sites) + (count or 1) - 1)
+  else
+    for i = #sites, 1, -1 do
+      local site = sites[i]
+      if site.Line < cursor[1] or (site.Line == cursor[1] and site.EndColumn - 1 <= cursor[2]) then index = i; break end
+    end
+    index = math.max(1, (index or 1) - (count or 1) + 1)
+  end
+  local site = sites[index]
+  vim.api.nvim_win_set_cursor(0, { site.Line, site.Column - 1 })
+  vim.cmd('normal! zv')
+end
+
+function M.edge(last)
+  local current, f = context_function()
+  if not current then return end
+  vim.api.nvim_win_set_cursor(0, { last and f.End or f.Line, 0 })
+  vim.cmd('normal! zv')
+end
+
 function M.start(buf, group)
   M.stop()
   vim.api.nvim_set_hl(0, 'HodoCodeFunction', { default = true, link = 'Visual' })
@@ -40,7 +92,7 @@ function M.start(buf, group)
     if active ~= current or vim.api.nvim_get_current_buf() ~= buf then return end
     current.generation = current.generation + 1
     local generation = current.generation
-    current.ctx, current.ranges, current.loading = nil, {}, false
+    current.ctx, current.ranges, current.loading, current.calls = nil, {}, false, {}
     clear()
     local hc = require('hodocode')
     local ok, ctx = pcall(hc.context)
@@ -59,7 +111,7 @@ function M.start(buf, group)
           if not valid() then return end
           current.loading = false
           if functions_err then return end
-          current.ctx = ctx
+          current.ctx, current.functions = ctx, functions
           local lines = vim.api.nvim_buf_get_lines(buf, 0, -1, false)
           local function owner(row)
             local selected
@@ -74,6 +126,17 @@ function M.start(buf, group)
             if f.File == ctx.file then
               client:request('calls', { ['function'] = f.ID }, function(result, calls_err)
                 if calls_err or not valid() then return end
+                local sites, seen = {}, {}
+                for _, site in ipairs(result.calls) do
+                  local line = lines[site.Line]
+                  local key = table.concat({ site.Line, site.Column }, ':')
+                  if line and site.Column >= 1 and site.EndColumn > site.Column and site.EndColumn <= #line + 1
+                    and owner(site.Line) == f.ID and not seen[key] then
+                    sites[#sites + 1], seen[key] = site, true
+                  end
+                end
+                table.sort(sites, function(a, b) return a.Line < b.Line or (a.Line == b.Line and a.Column < b.Column) end)
+                current.calls[f.ID] = sites
                 for _, site in ipairs(result.calls) do
                   local line = lines[site.Line]
                   local target = result.Targets[site.To]
@@ -104,7 +167,7 @@ function M.start(buf, group)
   vim.api.nvim_create_autocmd({ 'TextChanged', 'TextChangedI', 'BufWritePost', 'BufReadPost', 'BufFilePost' }, {
     group = group, buffer = buf, callback = function()
       current.generation = current.generation + 1
-      current.ctx, current.ranges, current.loading = nil, {}, false
+      current.ctx, current.ranges, current.loading, current.calls = nil, {}, false, {}
       clear()
       vim.schedule(refresh)
     end,
