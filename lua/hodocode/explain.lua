@@ -85,7 +85,7 @@ local function valid_response(response, ctx)
   return not response.message:find('\0', 1, true)
 end
 
-function M.run(config, prompt, row)
+function M.run(config, prompt, row, scope)
   if active then prep.notify('行解説は実行中です。:HodoCodeCancelで中止できます'); return false end
   if not prep.argv(config.explain_agent) then prep.notify('explain_agent にJSONアダプターのargvを設定してください'); return false end
   local ctx, err = prep.capture(config)
@@ -106,8 +106,11 @@ function M.run(config, prompt, row)
     if not ctx.valid() or vim.api.nvim_get_current_buf() ~= ctx.buf then finish('対象バッファが変更されました'); return end
     if value == nil then finish(); return end
     if type(value) ~= 'string' then finish('prompt must be a string'); return end
-    if value == '' then value = row and 'Explain this function line by line. Read-only; do not modify files.'
-      or 'Explain this buffer line by line. Read-only; do not modify files.' end
+    if value == '' then
+      value = scope == 'line' and 'Explain this line. Read-only; do not modify files.'
+        or row and 'Explain this function line by line. Read-only; do not modify files.'
+        or 'Explain this buffer line by line. Read-only; do not modify files.'
+    end
     prep.run(state, config, ctx, value, function(envelope, prepare_err, encoded)
       if prepare_err then finish(prepare_err); return end
       ctx.start_line, ctx.end_line = envelope.buffer.start_line, envelope.buffer.end_line
@@ -131,10 +134,13 @@ function M.run(config, prompt, row)
         records[ctx.buf] = record
         render(record)
       end)
-    end, row)
+    end, row, scope)
   end)
   if prompt == nil or prompt == '' then
-    prep.guard(state, function() vim.ui.input({ prompt = 'HodoCode 行解説への指示: ' }, send) end)()
+    prep.guard(state, function()
+      vim.ui.input({ prompt = scope == 'line' and 'HodoCode この行への指示（空欄で通常解説）: '
+        or 'HodoCode 関数解説への指示: ' }, send)
+    end)()
   else send(prompt) end
   return true
 end

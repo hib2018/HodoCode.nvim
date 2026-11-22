@@ -163,7 +163,7 @@ local function run()
   local actions = {
     { 't', 'calls' }, { 'b', 'back' }, { 'e', 'chat' }, { 'i', 'chat' }, { 'E', 'explain_now' },
     { 'c', 'notes_toggle' }, { '[', 'help_up' }, { ']', 'help_down' }, { 'f', 'functions' },
-    { 's', 'syntax' }, { 'r', 'reload' }, { 'a', 'explain' }, { 'x', 'cancel' },
+    { 's', 'syntax' }, { 'r', 'reload' }, { 'a', 'explain_line' }, { 'x', 'cancel' },
     { 'd', 'diff' }, { 'K', 'notes_show' }, { 'z', 'notes_clear' }, { 'm', 'graph' },
   }
   for _, action in ipairs(actions) do

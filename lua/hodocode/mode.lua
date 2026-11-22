@@ -8,7 +8,7 @@ local actions = {
   ['['] = { 'help_up', 'ポップアップを上へスクロール' }, [']'] = { 'help_down', 'ポップアップを下へスクロール' },
   v = { 'exit_mode', '編集へ戻る' },
   f = { 'functions', '関数一覧' }, s = { 'syntax', '構文' }, r = { 'reload', '再解析' },
-  a = { 'explain', 'AI解説への指示' }, x = { 'cancel', 'AI中止' }, d = { 'diff', '従来のAI編集前との差分' },
+  a = { 'explain_line', 'カーソル行を解説（指示可・空欄で通常解説）' }, x = { 'cancel', 'AI中止' }, d = { 'diff', '従来のAI編集前との差分' },
   ['<CR>'] = { 'follow', '呼び出し先' }, m = { 'graph', '図' },
   z = { 'notes_clear', '注釈消去' }, K = { 'notes_show', '注釈全文' },
   ['?'] = { 'help', '操作一覧' },
@@ -87,7 +87,7 @@ local function guide(current)
     lines = { 'HodoCode MODE | ?:操作一覧 | q/Esc:終了 v:編集',
       '移動 n/N:呼出名 → Enter:定義(黄色) → b:戻る | g/G:関数先頭/末尾',
       '表示 t:ツリー f:関数一覧 s:構文 K:注釈全文',
-      'AI E:関数解説 a:指示付き e:チャット x:中止' }
+      'AI E:関数解説 a:行解説 e:チャット x:中止' }
   elseif width >= 56 then
     lines = { 'HodoCode MODE | ?:操作一覧 | q/Esc:終了',
       '移動 n/N:選択 Enter:定義 b:戻る',

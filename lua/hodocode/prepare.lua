@@ -132,10 +132,10 @@ function M.cancel(state)
   return true
 end
 
-function M.run(state, config, ctx, purpose, callback, row)
+function M.run(state, config, ctx, purpose, callback, row, scope)
   if not M.argv(config.backend) then callback(nil, 'backend must be an argv list'); return end
   local payload = vim.json.encode({ file = ctx.file, content = ctx.content, purpose = purpose,
-    excludes = config.excludes or {}, row = row })
+    excludes = config.excludes or {}, row = scope ~= 'line' and row or nil })
   if #purpose > 8192 or #payload > 1024 * 1024 then callback(nil, 'prepare request exceeds size limit'); return end
   local argv = vim.deepcopy(config.backend)
   vim.list_extend(argv, { 'prepare-buffer', '--root', ctx.root })
@@ -153,6 +153,7 @@ function M.run(state, config, ctx, purpose, callback, row)
         content = result.content, version = result.version, language = result.language } }
       if row then
         local first, last = result.start_line, result.end_line
+        if scope == 'line' then first, last = row, row end
         if type(first) ~= 'number' or type(last) ~= 'number' or first ~= math.floor(first) or last ~= math.floor(last)
           or first < 1 or first > row or last < row or last > ctx.count then
           callback(nil, 'Invalid function scope; rebuild the HodoCode backend'); return

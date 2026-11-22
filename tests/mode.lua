@@ -17,7 +17,7 @@ local function run()
   local hc = require('hodocode')
   local mode = require('hodocode.mode')
   local dispatched = {}
-  for _, name in ipairs({ 'functions', 'calls', 'syntax', 'reload', 'explain', 'diff', 'follow', 'graph', 'chat', 'notes_toggle', 'notes_clear', 'notes_show', 'cancel', 'next_call', 'previous_call', 'back', 'function_start', 'function_end', 'explain_now', 'help_up', 'help_down' }) do
+  for _, name in ipairs({ 'functions', 'calls', 'syntax', 'reload', 'explain', 'explain_line', 'diff', 'follow', 'graph', 'chat', 'notes_toggle', 'notes_clear', 'notes_show', 'cancel', 'next_call', 'previous_call', 'back', 'function_start', 'function_end', 'explain_now', 'help_up', 'help_down' }) do
     local method = name
     hc[method] = function() dispatched[#dispatched + 1] = method end
   end
@@ -109,7 +109,7 @@ local function run()
 
   local actions = {
     { 'f', 'functions' }, { 't', 'calls' }, { 's', 'syntax' }, { 'r', 'reload' },
-    { 'x', 'cancel' }, { 'd', 'diff' }, { 'a', 'explain' }, { '<CR>', 'follow' },
+    { 'x', 'cancel' }, { 'd', 'diff' }, { 'a', 'explain_line' }, { '<CR>', 'follow' },
     { 'm', 'graph' }, { 'e', 'chat' }, { 'i', 'chat' }, { 'c', 'notes_toggle' }, { 'z', 'notes_clear' }, { 'K', 'notes_show' },
     { 'n', 'next_call' }, { 'N', 'previous_call' }, { 'b', 'back' }, { 'g', 'function_start' }, { 'G', 'function_end' },
     { 'E', 'explain_now' }, { '[', 'help_up' }, { ']', 'help_down' },

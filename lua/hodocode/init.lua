@@ -212,6 +212,10 @@ function M.explain(prompt)
   require('hodocode.explain').run(M.config, prompt, vim.api.nvim_win_get_cursor(0)[1])
 end
 
+function M.explain_line(prompt)
+  require('hodocode.explain').run(M.config, prompt, vim.api.nvim_win_get_cursor(0)[1], 'line')
+end
+
 function M.chat()
   require('hodocode.chat').open(M.config)
 end
