@@ -182,9 +182,10 @@ function M.syntax()
   with_context(function(ctx, client)
     client:request('syntax', { file = ctx.file, row = ctx.row, column = ctx.column }, checked(ctx, function(help)
       local lines = { '# ' .. help.title, '', help.description }
+      local headings = { syntax = '構文', example = '使用例', caution = '注意点', reference = '参照元' }
       for _, field in ipairs({ 'syntax', 'example', 'caution', 'reference' }) do
         if help[field] and help[field] ~= '' then
-          vim.list_extend(lines, { '', '## ' .. field })
+          vim.list_extend(lines, { '', '## ' .. headings[field] })
           vim.list_extend(lines, vim.split(help[field], '\n', { plain = true }))
         end
       end

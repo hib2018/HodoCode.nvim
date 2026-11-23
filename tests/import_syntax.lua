@@ -10,10 +10,10 @@ local function run()
     'package main',
     'import (',
     '  f "fmt"',
-    '  h "example.test/importhelp/helper"',
+    '  h "example.test/importhelp/helper"; sig "os/signal"',
     ')',
     'func main() {',
-    '  _ = "日本語"; f.Println(h.Double(2))',
+    '  _ = "日本語"; f.Println(h.Double(2)); _ = sig.NotifyContext',
     '}',
   }
   vim.fn.writefile(source_lines, root .. '/main.go')
@@ -48,6 +48,16 @@ local function run()
   assert(text():find('GOROOT/src/fmt/print.go:', 1, true), text())
   press('q')
   assert(require('hodocode.mode').active() and vim.api.nvim_get_current_buf() == source)
+  show_at('NotifyContext')
+  assert(text():find('関数情報: NotifyContext', 1, true), text())
+  for _, translated in ipairs({ '親コンテキストのコピー', '既定の動作（終了）', 'context.Cause', '関連するリソースを解放', '## 構文', '## 注意点', '## 参照元' }) do
+    assert(text():find(translated, 1, true), 'missing translated paragraph or heading: ' .. translated)
+  end
+  for _, original in ipairs({ 'NotifyContext returns a copy', 'The stop function', '日本語説明は未登録', '## syntax', '## caution', '## reference' }) do
+    assert(not text():find(original, 1, true), 'translated help must not retain fallback English: ' .. original)
+  end
+  assert(text():find('func os/signal.NotifyContext', 1, true), 'signature must stay unchanged')
+  press('q')
   show_at('Double')
   assert(text():find('関数情報: Double', 1, true), text())
   assert(text():find('日本語説明は未登録', 1, true), text())
@@ -65,7 +75,7 @@ local function run()
   require('hodocode.client').stop_all()
   assert(table.concat(vim.fn.readfile(root .. '/main.go'), '\n') == table.concat(source_lines, '\n'))
   vim.fn.delete(root, 'rf')
-  print('PASS: real s mapping, imported SDK/local aliases, signatures/docs/source labels, UTF8 byte position, shared popup and stale cleanup; no AI/network')
+  print('PASS: real s mapping, pre-translated NotifyContext paragraphs/Japanese headings, imported SDK/local aliases, signatures/docs/source labels, UTF8 byte position, shared popup and stale cleanup; no AI/network')
 end
 local ok, err = xpcall(run, debug.traceback)
 if not ok then io.stderr:write(err .. '\n'); vim.cmd('cquit 1') else vim.cmd('qa!') end
