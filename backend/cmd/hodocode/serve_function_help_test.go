@@ -23,7 +23,7 @@ func TestServeImportedFunctionSyntax(t *testing.T) {
 	}
 	line := "func Entry() { _ = \"日本語\"; f.Println(h.Double(2)); h.NoDoc(); missing(); _ = len(\"abc\"); _ = 1 + 2 }"
 	cases := []struct{ name, title, description, signature, reference string }{
-		{"Println", "関数情報: Println", "Println formats", "func fmt.Println", "GOROOT/src/fmt/print.go:"},
+		{"Println", "関数情報: Println", "標準出力へ書き込みます", "func fmt.Println", "GOROOT/src/fmt/print.go:"},
 		{"Double", "関数情報: Double", "Double returns twice the input.", "func example.com/machine/helper.Double(x int) int", "helper/help.go:"},
 		{"NoDoc", "関数情報: NoDoc", "説明コメントはありません", "func example.com/machine/helper.NoDoc()", "helper/help.go:"},
 		{"missing", "", "", "", ""},

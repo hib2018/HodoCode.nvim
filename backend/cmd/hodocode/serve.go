@@ -268,9 +268,13 @@ func serveSyntaxAt(p *analyze.Project, root, file string, row, column int) (any,
 			return nil, err
 		}
 		if info != nil {
-			description := info.Documentation
+			description := info.Summary
 			if description == "" {
-				description = "定義元のソースに関数の説明コメントはありません。シグネチャと定義元を表示します。"
+				if info.Documentation != "" {
+					description = "この関数の日本語説明は未登録です。以下は定義元のコメント（原文）です。\n\n" + info.Documentation
+				} else {
+					description = "定義元のソースに関数の説明コメントはありません。シグネチャと定義元を表示します。"
+				}
 			}
 			return serveSyntax{
 				Title: "関数情報: " + info.Name, Description: description,
