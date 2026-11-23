@@ -1,15 +1,39 @@
 package analyze
 
 import (
+	"crypto/sha256"
+	_ "embed"
+	"encoding/json"
+	"fmt"
 	"go/types"
 	"path/filepath"
 )
 
-// Only SDK declarations use this hand-written glossary; project names and methods must not match it.
-func japaneseFunctionSummary(fn *types.Func, filename string) string {
+//go:embed stdlib_ja.json
+var stdlibJapaneseJSON []byte
+
+type stdlibTranslationCatalog struct {
+	GoVersion    string            `json:"go_version"`
+	Translations map[string]string `json:"translations"`
+}
+
+var stdlibJapaneseCatalog = func() stdlibTranslationCatalog {
+	var catalog stdlibTranslationCatalog
+	if err := json.Unmarshal(stdlibJapaneseJSON, &catalog); err != nil {
+		panic("invalid embedded Japanese SDK catalog: " + err.Error())
+	}
+	return catalog
+}()
+
+// Catalog keys use the exact Doc.Text(), including its trailing newline.
+func japaneseFunctionSummary(fn *types.Func, filename, documentation string) string {
 	if fn.Pkg() == nil || !sdkDirectory(filepath.Dir(filename)) {
 		return ""
 	}
+	if translated := stdlibJapaneseCatalog.Translations[fmt.Sprintf("%x", sha256.Sum256([]byte(documentation)))]; documentation != "" && translated != "" {
+		return translated
+	}
+	// The older glossary identifies free functions only, never same-named methods.
 	if signature, ok := fn.Type().(*types.Signature); !ok || signature.Recv() != nil {
 		return ""
 	}

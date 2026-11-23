@@ -15,7 +15,8 @@ type FunctionHelp struct {
 	Name          string
 	Signature     string
 	Documentation string
-	Summary       string // Hand-written Japanese help for supported SDK functions; empty otherwise.
+	Summary       string // Pretranslated Japanese SDK documentation; empty when unavailable.
+	Origin        string // standard, local, or dependency, determined from the resolved source.
 	Reference     string
 }
 
@@ -101,8 +102,15 @@ func (p *Project) FunctionHelp(file, source string, row, column int) (*FunctionH
 	}
 	pos := p.fset.PositionFor(declaration.Pos(), false)
 	label := loader.labels[pos.Filename]
+	origin := "local"
+	if sdkDirectory(filepath.Dir(pos.Filename)) {
+		origin = "standard"
+	} else if label != "" {
+		origin = "dependency"
+	}
 	if label == "" {
 		label = p.sourceName(pos.Filename)
 	}
-	return &FunctionHelp{Name: fn.Name(), Signature: types.ObjectString(fn, nil), Documentation: declaration.Doc.Text(), Summary: japaneseFunctionSummary(fn, pos.Filename), Reference: fmt.Sprintf("%s:%d", label, pos.Line)}, nil
+	documentation := declaration.Doc.Text()
+	return &FunctionHelp{Name: fn.Name(), Signature: types.ObjectString(fn, nil), Documentation: documentation, Summary: japaneseFunctionSummary(fn, pos.Filename, documentation), Origin: origin, Reference: fmt.Sprintf("%s:%d", label, pos.Line)}, nil
 }

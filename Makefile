@@ -4,9 +4,12 @@ build:
 	cd backend && go build -o ../bin/hodocode ./cmd/hodocode
 
 test: build
+	go test tools/stdlib-docs/main.go tools/stdlib-docs/main_test.go
+	python3 -m unittest discover -s tools -p test_translate_stdlib.py
 	cd backend && go test ./cmd/hodocode ./internal/...
 	nvim --headless -u NONE -l tests/headless.lua
 	nvim --headless -u NONE -l tests/import_syntax.lua
+	nvim --headless -u NONE -l tests/syntax_translation.lua
 	nvim --headless -u NONE -l tests/edges.lua
 	nvim --headless -u NONE -l tests/errors.lua
 	nvim --headless -u NONE -l tests/mode.lua

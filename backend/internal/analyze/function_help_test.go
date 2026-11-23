@@ -121,7 +121,7 @@ func TestFunctionHelpOfflineDependency(t *testing.T) {
 				t.Fatal(err)
 			}
 			help := functionHelpAt(t, p, "entry.go", source, "Work()")
-			if help == nil || help.Name != "Work" || help.Signature != "func example.com/dep.Work()" || help.Documentation != "Work performs work.\n" || !strings.HasSuffix(help.Reference, "/dep.go:4") || !strings.HasPrefix(help.Reference, "example.com/dep@v1.0.0") {
+			if help == nil || help.Origin != "dependency" || help.Name != "Work" || help.Signature != "func example.com/dep.Work()" || help.Documentation != "Work performs work.\n" || !strings.HasSuffix(help.Reference, "/dep.go:4") || !strings.HasPrefix(help.Reference, "example.com/dep@v1.0.0") {
 				t.Fatalf("dependency help: %+v", help)
 			}
 			if replacement && !strings.Contains(help.Reference, "[replace => ") {

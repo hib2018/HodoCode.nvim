@@ -64,12 +64,14 @@ type serveGraphResult struct {
 }
 
 type serveSyntax struct {
-	Title       string `json:"title"`
-	Description string `json:"description"`
-	Syntax      string `json:"syntax"`
-	Example     string `json:"example"`
-	Caution     string `json:"caution"`
-	Reference   string `json:"reference"`
+	Title         string `json:"title"`
+	Description   string `json:"description"`
+	Syntax        string `json:"syntax"`
+	Example       string `json:"example"`
+	Caution       string `json:"caution"`
+	Reference     string `json:"reference"`
+	Translate     bool   `json:"translate,omitempty"`
+	Documentation string `json:"documentation,omitempty"`
 }
 
 func runServe(ctx context.Context, args []string, in io.Reader, out, stderr io.Writer) error {
@@ -276,11 +278,17 @@ func serveSyntaxAt(p *analyze.Project, root, file string, row, column int) (any,
 					description = "定義元のソースに関数の説明コメントはありません。シグネチャと定義元を表示します。"
 				}
 			}
-			return serveSyntax{
+			help := serveSyntax{
 				Title: "関数情報: " + info.Name, Description: description,
 				Syntax: info.Signature, Reference: info.Reference,
 				Caution: "保存済みソースの静的解析による情報です。実行時に呼ばれる実装や動作を保証するものではありません。",
-			}, nil
+			}
+			if info.Origin == "dependency" && info.Summary == "" && info.Documentation != "" {
+				help.Description = info.Documentation
+				help.Translate = true
+				help.Documentation = info.Documentation
+			}
+			return help, nil
 		}
 	}
 	runeColumn := utf8.RuneCountInString(lines[row][:column])
@@ -289,7 +297,7 @@ func serveSyntaxAt(p *analyze.Project, root, file string, row, column int) (any,
 			continue
 		}
 		help := note.help()
-		return serveSyntax{help.title, help.description, help.syntax, help.example, help.caution, help.reference}, nil
+		return serveSyntax{Title: help.title, Description: help.description, Syntax: help.syntax, Example: help.example, Caution: help.caution, Reference: help.reference}, nil
 	}
 	return nil, fmt.Errorf("no syntax at position")
 }

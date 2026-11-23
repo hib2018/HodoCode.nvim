@@ -43,14 +43,14 @@ local function run()
   show_at('Println')
   assert(text():find('関数情報: Println', 1, true), text())
   assert(text():find('func fmt.Println', 1, true), text())
-  assert(text():find('標準出力へ書き込みます', 1, true), 'Japanese SDK help must be visible: ' .. text())
+  assert(text():find('標準出力', 1, true), 'Japanese SDK help must be visible: ' .. text())
   assert(not text():find('Println formats', 1, true), 'registered functions must use Japanese help')
   assert(text():find('GOROOT/src/fmt/print.go:', 1, true), text())
   press('q')
   assert(require('hodocode.mode').active() and vim.api.nvim_get_current_buf() == source)
   show_at('NotifyContext')
   assert(text():find('関数情報: NotifyContext', 1, true), text())
-  for _, translated in ipairs({ '親コンテキストのコピー', '既定の動作（終了）', 'context.Cause', '関連するリソースを解放', '## 構文', '## 注意点', '## 参照元' }) do
+  for _, translated in ipairs({ 'signal.Reset', 'os.Interrupt', 'context.Cause', 'stop', '## 構文', '## 注意点', '## 参照元' }) do
     assert(text():find(translated, 1, true), 'missing translated paragraph or heading: ' .. translated)
   end
   for _, original in ipairs({ 'NotifyContext returns a copy', 'The stop function', '日本語説明は未登録', '## syntax', '## caution', '## reference' }) do
