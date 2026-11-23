@@ -6,6 +6,7 @@ build:
 test: build
 	cd backend && go test ./cmd/hodocode ./internal/...
 	nvim --headless -u NONE -l tests/headless.lua
+	nvim --headless -u NONE -l tests/import_syntax.lua
 	nvim --headless -u NONE -l tests/edges.lua
 	nvim --headless -u NONE -l tests/errors.lua
 	nvim --headless -u NONE -l tests/mode.lua
