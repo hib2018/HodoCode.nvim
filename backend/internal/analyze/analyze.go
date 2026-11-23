@@ -161,7 +161,7 @@ func load(root, moduleBoundary string) (*Project, error) {
 		if readErr != nil {
 			return readErr
 		}
-		file, parseErr := parser.ParseFile(p.fset, filename, source, parser.SkipObjectResolution)
+		file, parseErr := parser.ParseFile(p.fset, filename, source, parser.SkipObjectResolution|parser.ParseComments)
 		if parseErr != nil {
 			return parseErr
 		}

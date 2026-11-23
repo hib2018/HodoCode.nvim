@@ -128,7 +128,7 @@ func TestServeSyntaxUTF8AndSecurity(t *testing.T) {
 	// Direct syntax checks avoid starting an unrelated Python language server.
 	for _, tc := range cases {
 		t.Run(tc.file, func(t *testing.T) {
-			result, err := serveSyntaxAt(root, tc.file, tc.row, tc.column)
+			result, err := serveSyntaxAt(nil, root, tc.file, tc.row, tc.column)
 			if (err != nil) != tc.bad {
 				t.Fatalf("result=%v err=%v", result, err)
 			}

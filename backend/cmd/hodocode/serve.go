@@ -171,7 +171,7 @@ func serveDispatch(ctx context.Context, project **analyze.Project, root, languag
 		}
 		return result, nil
 	case "syntax":
-		return serveSyntaxAt(root, req.Params.File, req.Params.Row, req.Params.Column)
+		return serveSyntaxAt(p, root, req.Params.File, req.Params.Row, req.Params.Column)
 	case "reload":
 		next, err := analyze.LoadLanguageContext(ctx, root, language)
 		if err != nil {
@@ -228,7 +228,7 @@ func serveGraph(p *analyze.Project, req serveRequest) (serveGraphResult, error) 
 	return result, nil
 }
 
-func serveSyntaxAt(root, file string, row, column int) (any, error) {
+func serveSyntaxAt(p *analyze.Project, root, file string, row, column int) (any, error) {
 	if file == "" || filepath.IsAbs(file) || !filepath.IsLocal(file) {
 		return nil, fmt.Errorf("file must be project-relative")
 	}
@@ -261,6 +261,23 @@ func serveSyntaxAt(root, file string, row, column int) (any, error) {
 	}
 	if !utf8.Valid(source) || column < len(lines[row]) && !utf8.RuneStart(lines[row][column]) {
 		return nil, fmt.Errorf("position must be on a UTF-8 byte boundary")
+	}
+	if p != nil && language == "go" {
+		info, err := p.FunctionHelp(filepath.ToSlash(rel), string(source), row, column)
+		if err != nil {
+			return nil, err
+		}
+		if info != nil {
+			description := info.Documentation
+			if description == "" {
+				description = "定義元のソースに関数の説明コメントはありません。シグネチャと定義元を表示します。"
+			}
+			return serveSyntax{
+				Title: "関数情報: " + info.Name, Description: description,
+				Syntax: info.Signature, Reference: info.Reference,
+				Caution: "保存済みソースの静的解析による情報です。実行時に呼ばれる実装や動作を保証するものではありません。",
+			}, nil
+		}
 	}
 	runeColumn := utf8.RuneCountInString(lines[row][:column])
 	for _, note := range languageExplanations(language, string(source)) {

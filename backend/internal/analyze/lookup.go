@@ -225,7 +225,7 @@ func (p *Project) sourcePackage(pkg, origin string, standardOnly bool) *sourcePa
 				return result
 			}
 		}
-		file, err := parser.ParseFile(p.fset, real, data, parser.SkipObjectResolution)
+		file, err := parser.ParseFile(p.fset, real, data, parser.SkipObjectResolution|parser.ParseComments)
 		if err != nil {
 			result.err = err
 			return result
