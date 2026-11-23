@@ -15,6 +15,7 @@ type FunctionHelp struct {
 	Name          string
 	Signature     string
 	Documentation string
+	Summary       string // Hand-written Japanese help for supported SDK functions; empty otherwise.
 	Reference     string
 }
 
@@ -103,5 +104,5 @@ func (p *Project) FunctionHelp(file, source string, row, column int) (*FunctionH
 	if label == "" {
 		label = p.sourceName(pos.Filename)
 	}
-	return &FunctionHelp{Name: fn.Name(), Signature: types.ObjectString(fn, nil), Documentation: declaration.Doc.Text(), Reference: fmt.Sprintf("%s:%d", label, pos.Line)}, nil
+	return &FunctionHelp{Name: fn.Name(), Signature: types.ObjectString(fn, nil), Documentation: declaration.Doc.Text(), Summary: japaneseFunctionSummary(fn, pos.Filename), Reference: fmt.Sprintf("%s:%d", label, pos.Line)}, nil
 }
