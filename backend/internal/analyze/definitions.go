@@ -46,20 +46,7 @@ func (p *Project) Definitions(id string) (map[int]Definition, error) {
 	info := &types.Info{Uses: map[*ast.Ident]types.Object{}, Defs: map[*ast.Ident]types.Object{}}
 	loader := p.newImporter(id, true)
 	config := types.Config{Importer: loader, Sizes: types.SizesFor(build.Default.Compiler, build.Default.GOARCH), Error: func(error) {}}
-	files, _ := p.typeFiles(p.owners[id], fn)
-	// Restore only the selected declaration, including closures, without mutating
-	// either the index or typeFiles' body-omission policy for call analysis.
-	for i, original := range files {
-		for j, decl := range original.Decls {
-			if decl.Pos() == fn.Pos() {
-				file := *original
-				file.Decls = append([]ast.Decl(nil), original.Decls...)
-				file.Decls[j] = fn
-				files[i] = &file
-				break
-			}
-		}
-	}
+	files := p.definitionTypeFiles(p.owners[id], fn)
 	_, _ = config.Check(p.owners[id], p.fset, files, info)
 
 	declarations := p.definitionNodes()
@@ -225,4 +212,23 @@ func (p *Project) definitionSource(node ast.Node) DefinitionSource {
 		end = p.fset.PositionFor(loop.X.End(), false).Offset
 	}
 	return DefinitionSource{File: name, Line: pos.Line, Source: string(p.sources[pos.Filename][pos.Offset:end])}
+}
+
+// Preserve the selected body, including closures, for identifier lookups.
+func (p *Project) definitionTypeFiles(pkg string, fn *ast.FuncDecl) []*ast.File {
+	files, _ := p.typeFiles(pkg, fn)
+	// Restore only the selected declaration, including closures, without mutating
+	// either the index or typeFiles' body-omission policy for call analysis.
+	for i, original := range files {
+		for j, decl := range original.Decls {
+			if decl.Pos() == fn.Pos() {
+				file := *original
+				file.Decls = append([]ast.Decl(nil), original.Decls...)
+				file.Decls[j] = fn
+				files[i] = &file
+				break
+			}
+		}
+	}
+	return files
 }
