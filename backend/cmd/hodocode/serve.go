@@ -64,14 +64,15 @@ type serveGraphResult struct {
 }
 
 type serveSyntax struct {
-	Title         string `json:"title"`
-	Description   string `json:"description"`
-	Syntax        string `json:"syntax"`
-	Example       string `json:"example"`
-	Caution       string `json:"caution"`
-	Reference     string `json:"reference"`
-	Translate     bool   `json:"translate,omitempty"`
-	Documentation string `json:"documentation,omitempty"`
+	Title         string             `json:"title"`
+	Description   string             `json:"description"`
+	Syntax        string             `json:"syntax"`
+	Example       string             `json:"example"`
+	Caution       string             `json:"caution"`
+	Reference     string             `json:"reference"`
+	Translate     bool               `json:"translate,omitempty"`
+	Documentation string             `json:"documentation,omitempty"`
+	Variable      *serveVariableInfo `json:"variable,omitempty"`
 }
 
 func runServe(ctx context.Context, args []string, in io.Reader, out, stderr io.Writer) error {
@@ -265,6 +266,13 @@ func serveSyntaxAt(p *analyze.Project, root, file string, row, column int) (any,
 		return nil, fmt.Errorf("position must be on a UTF-8 byte boundary")
 	}
 	if p != nil && language == "go" {
+		variable, err := p.VariableHelp(filepath.ToSlash(rel), string(source), row, column)
+		if err != nil {
+			return nil, err
+		}
+		if variable != nil {
+			return variableSyntax(variable), nil
+		}
 		info, err := p.FunctionHelp(filepath.ToSlash(rel), string(source), row, column)
 		if err != nil {
 			return nil, err
