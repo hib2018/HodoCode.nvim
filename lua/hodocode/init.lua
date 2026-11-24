@@ -182,6 +182,7 @@ local syntax_translation
 local translation_cache, translation_order = {}, {}
 
 local function stop_translation()
+  require('hodocode.variable').cancel()
   local state = syntax_translation
   syntax_translation = nil
   if not state then return end
@@ -209,6 +210,11 @@ end
 
 local function syntax_help(ctx, help)
   stop_translation()
+  if type(help.variable) == 'table' then
+    local buf, win = require('hodocode.ui').float(syntax_lines(help, help.description), 'HodoCode 変数情報', ctx)
+    require('hodocode.variable').attach(ctx, help.variable, buf, win)
+    return
+  end
   local prep = require('hodocode.prepare')
   local translate = help.translate == true and type(help.documentation) == 'string' and help.documentation ~= ''
   local key = translate and vim.fn.sha256(vim.json.encode({ help.syntax or '', help.documentation }))

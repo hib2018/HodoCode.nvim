@@ -7,7 +7,7 @@ local actions = {
   E = { 'explain_now', '現在の関数のAI行解説を生成' }, c = { 'notes_toggle', '行解説表示切替' },
   ['['] = { 'help_up', 'ポップアップを上へスクロール' }, [']'] = { 'help_down', 'ポップアップを下へスクロール' },
   v = { 'exit_mode', '編集へ戻る' },
-  f = { 'functions', '関数一覧' }, s = { 'syntax', '構文・関数情報' }, r = { 'reload', '再解析' },
+  f = { 'functions', '関数一覧' }, s = { 'syntax', '構文・関数・変数情報' }, r = { 'reload', '再解析' },
   a = { 'explain_line', 'カーソル行を解説（指示可・空欄で通常解説）' }, x = { 'cancel', 'AI中止' }, d = { 'diff', '従来のAI編集前との差分' },
   ['<CR>'] = { 'follow', '呼び出し先' }, m = { 'graph', '図' },
   z = { 'notes_clear', '注釈消去' }, K = { 'notes_show', '注釈全文' },
