@@ -1,8 +1,10 @@
 local M = {}
 local ui = require('hodocode.ui')
 local prepare = require('hodocode.prepare')
+local events = require('hodocode.edit_events')
 local uv = vim.uv or vim.loop
 local active, snapshots, views, undo_eol = nil, {}, {}, {}
+local statuses = {}
 
 local restoring_eol = false
 vim.api.nvim_create_autocmd('OptionSet', { pattern = 'endofline', callback = function()
@@ -145,9 +147,63 @@ local function capture()
   return ctx
 end
 
-local function cancel(state)
-  state.cancelled = true
+local function elapsed(state)
+  return state.started and math.floor((uv.hrtime() - state.started) / 1000000) or 0
+end
+
+local function status(state, phase, running, code)
+  local changed = state.phase ~= phase or state.running ~= running or state.code ~= code
+  state.phase, state.running, state.code = phase, running, code
+  if state.started and vim.api.nvim_buf_is_valid(state.source) then
+    statuses[state.source] = { phase = phase, elapsed_ms = elapsed(state), running = running, code = code }
+  end
+  if changed then
+    vim.api.nvim_exec_autocmds('User', { pattern = 'HodoCodeAgentStatus',
+      data = { buf = state.source, phase = phase, running = running } })
+  end
+end
+
+function M.status(buf)
+  if active and active.started and active.source == buf then
+    return { phase = active.phase, elapsed_ms = elapsed(active), running = active.running, code = active.code }
+  end
+  return statuses[buf] and vim.deepcopy(statuses[buf]) or nil
+end
+
+local function finish_status(state, code)
+  if state.timer then state.timer:stop(); state.timer:close(); state.timer = nil end
+  local phase = code == 'cancelled' and 'cancelled' or (code and 'error' or 'done')
   if active == state then active = nil end
+  status(state, phase, false, code)
+end
+
+local failures = {
+  timeout = '応答が時間制限を超えました。要求を短くするか制限時間を増やして再実行してください。',
+  cancelled = 'エージェント要求を中止しました。必要なら再実行してください。',
+  process_exit = 'エージェントが異常終了しました。接続先の設定を確認して再実行してください。',
+  invalid_response = '不正なエージェント応答です。JSON/NDJSON形式を確認してください。',
+  size_limit = 'エージェント出力がサイズ制限を超えています。要求を小さくしてください。',
+  invalid_patch = '不正な変更です。変更を適用せず終了しました。再実行してください。',
+  version_mismatch = '応答のバージョンが要求と一致しません。変更せず終了しました。再実行してください。',
+  conflict = '競合: 対象バッファまたはファイルが変更されたため、変更を適用していません。再実行してください。',
+  provider_exit = 'AI接続先でエラーが発生しました。接続設定を確認して再実行してください。',
+  authentication = 'AI接続先の認証設定を確認して再実行してください。',
+  configuration_error = 'エージェントの設定を確認して再実行してください。',
+  invalid_json = '不正なJSON応答です。エージェントの出力形式を確認して再実行してください。',
+  rate_limit = 'AI接続先の利用制限です。時間をおいて再実行してください。',
+  transport = 'AI接続先との通信に失敗しました。接続を確認して再実行してください。',
+  spawn_failed = 'エージェントを起動できません。実行ファイルの設定を確認してください。',
+  internal_error = 'エージェント内部エラーです。設定を確認して再実行してください。',
+}
+local function failure_text(state, code, detail)
+  local message = failures[code] or failures.process_exit
+  if code == 'invalid_patch' and type(detail) == 'string' then message = message .. ' ' .. detail end
+  return message .. ('（経過 %.1f秒）'):format(elapsed(state) / 1000)
+end
+
+local function cancel(state, code)
+  state.cancelled = true
+  finish_status(state, code or 'cancelled')
   local close = state.prompt_close
   state.prompt_close = nil
   if close then close() end
@@ -161,7 +217,7 @@ function M.stop()
   cancel(state)
   if state.buf and vim.api.nvim_buf_is_valid(state.buf) then
     vim.bo[state.buf].modifiable = true
-    vim.api.nvim_buf_set_lines(state.buf, 0, -1, false, { 'エージェント要求を中止しました。' })
+    vim.api.nvim_buf_set_lines(state.buf, 0, -1, false, { failure_text(state, 'cancelled') })
     vim.bo[state.buf].modifiable = false
   end
 end
@@ -179,7 +235,10 @@ local function launch(config, prompt, state, ctx)
   state.cwd = prepare.tempdir()
   if not state.cwd then cancel(state); error_message('専用作業ディレクトリを作成できません'); return end
   local output_buf, output_win = ui.float({ '# エージェント', '', '実行中…' }, 'HodoCode エージェント')
-  state.buf = output_buf
+  state.buf, state.source, state.started = output_buf, ctx.buf, uv.hrtime()
+  if not statuses[ctx.buf] then
+    vim.api.nvim_create_autocmd('BufWipeout', { buffer = ctx.buf, once = true, callback = function() statuses[ctx.buf] = nil end })
+  end
   local function closed()
     if active == state then cancel(state) end
   end
@@ -192,75 +251,108 @@ local function launch(config, prompt, state, ctx)
       vim.bo[output_buf].modifiable = false
     end
   end
-  local function stream(field)
+  local labels = { starting = '開始中', waiting = '応答待ち', received = '応答受信', validating = '変更を検証中' }
+  local function progress()
+    if state.running and not state.cancelled then
+      render({ '# エージェント', '', ('実行中… %s（経過 %.1f秒）'):format(labels[state.phase] or '応答待ち', elapsed(state) / 1000) })
+    end
+  end
+  status(state, 'starting', true)
+  if state.cancelled or active ~= state then return end
+  state.timer = uv.new_timer()
+  state.timer:start(1000, 1000, vim.schedule_wrap(progress))
+  local parser = events.new(config.max_agent_bytes, function(phase)
+    vim.schedule(function()
+      if active == state and state.running and not state.cancelled then status(state, phase, true); progress() end
+    end)
+  end)
+  local bytes = 0
+  local function stream(stdout)
     return function(err, chunk)
-      if err then state.failure = 'エージェント出力を読み取れません' end
+      if err then state.failure = 'process_exit' end
       if chunk then
-        state[field] = state[field] .. chunk
-        if #state[field] > config.max_agent_bytes then
-          state[field] = state[field]:sub(1, config.max_agent_bytes)
-          state.failure = 'エージェント出力がサイズ制限を超えています'
-          if state.process then state.process:kill(15) end
+        bytes = bytes + #chunk
+        if bytes > config.max_agent_bytes then state.failure = 'size_limit'
+        elseif stdout then
+          local _, parse_error = parser:feed(chunk)
+          if parse_error then state.failure = parse_error end
         end
+        if state.failure and state.process then state.process:kill(15) end
       end
     end
   end
   local ok, process = pcall(vim.system, config.agent, {
     cwd = state.cwd, stdin = payload .. '\n', text = true,
-    timeout = config.agent_timeout_ms, stdout = stream('output'), stderr = stream('stderr'),
+    timeout = config.agent_timeout_ms, env = {
+      HODOCODE_AGENT_TIMEOUT_MS = tostring(config.agent_timeout_ms), HODOCODE_EDIT_PROTOCOL = '2',
+    },
+    stdout = stream(true), stderr = stream(false),
   }, vim.schedule_wrap(function(result)
     prepare.clean_cwd(state)
     if state.cancelled then return end
-    if active == state then active = nil end
-    if not vim.api.nvim_win_is_valid(output_win) then return end
-    if state.failure or result.code ~= 0 then
-      local message = state.failure or ('agent exited (' .. tostring(result.code) .. ')')
-      render({ message }); error_message(message); return
+    local response, parse_error = parser:finish()
+    local code = state.failure
+    if result.code == 124 or (result.signal and result.signal ~= 0 and elapsed(state) >= config.agent_timeout_ms) then code = 'timeout' end
+    if not code and response and response.event == 'error' then code = response.code end
+    if not code and result.code ~= 0 then code = 'process_exit' end
+    if not code then code = parse_error end
+    local function fail(reason, detail)
+      local message = failure_text(state, reason, detail)
+      finish_status(state, reason)
+      render({ message }); error_message(message)
     end
-    local decoded, response = pcall(vim.json.decode, state.output)
-    if not decoded or type(response) ~= 'table' or type(response.message) ~= 'string'
-      or response.message:find('\0', 1, true)
-      or (response.content ~= nil and type(response.content) ~= 'string') then
-      render({ '不正なエージェント応答です。messageと任意のcontentを含むJSONが必要です。' }); return
+    if code then fail(code); return end
+    if not vim.api.nvim_win_is_valid(output_win) then finish_status(state, 'cancelled'); return end
+    status(state, 'validating', true)
+    if state.cancelled or active ~= state then return end
+    if response.version ~= nil and response.version ~= vim.fn.sha256(ctx.content) then fail('version_mismatch'); return end
+    if response.edits ~= nil then
+      local content, patch_error = require('hodocode.edit_patch').apply(ctx.content, response.edits, config.max_agent_bytes)
+      if not content or patch_error then fail('invalid_patch', patch_error); return end
+      response.content = content
     end
+    if not ctx.valid() then fail('conflict'); return end
+    if response.content ~= nil and not supported(response.content) then fail('invalid_patch'); return end
     local lines = vim.split(response.message, '\n', { plain = true })
     if response.content ~= nil then
-      if not supported(response.content) then render({ '不正な変更です。UTF-8とunix/dos改行のみ対応しています' }); return end
-      if not ctx.valid() then
-        lines[#lines + 1] = '競合: 実行中にバッファまたはファイルが変更されたため、変更を適用していません。'
-      else
-        local replacement = logical(response.content)
-        local changed = not vim.deep_equal(replacement.lines, vim.api.nvim_buf_get_lines(ctx.buf, 0, -1, false))
-          or replacement.endofline ~= vim.bo[ctx.buf].endofline
-        if changed then
-          vim.api.nvim_buf_call(ctx.buf, function()
-            -- Break the undo block without discarding the user's earlier unsaved edits.
-            vim.cmd('let &l:undolevels = &l:undolevels')
-            local before_seq, before_eol = vim.fn.undotree().seq_cur, vim.bo[ctx.buf].endofline
-            vim.api.nvim_buf_set_lines(ctx.buf, 0, -1, false, replacement.lines)
-            restoring_eol = true
-            vim.bo[ctx.buf].endofline = replacement.endofline
-            restoring_eol = false
-            track_eol(ctx.buf, before_seq, before_eol, vim.fn.undotree().seq_cur, replacement.endofline)
-          end)
-          if not snapshots[ctx.buf] then
-            vim.api.nvim_create_autocmd('BufWipeout', { buffer = ctx.buf, once = true, callback = function() snapshots[ctx.buf] = nil end })
-          end
-          snapshots[ctx.buf] = ctx.saved
-          require('hodocode.edit_marks').set(ctx.buf, ctx.content, text(ctx.buf))
-          local focused = vim.api.nvim_get_current_win() == output_win
-          vim.api.nvim_win_close(output_win, true)
-          if focused and vim.api.nvim_win_is_valid(ctx.win) then vim.api.nvim_set_current_win(ctx.win) end
-          vim.cmd.redraw()
-          vim.notify('HodoCode: バッファを更新しました（未保存）。🤖が変更行です。dで差分を確認できます。')
-          return
+      if not ctx.valid() then fail('conflict'); return end
+      local replacement = logical(response.content)
+      local changed = not vim.deep_equal(replacement.lines, vim.api.nvim_buf_get_lines(ctx.buf, 0, -1, false))
+        or replacement.endofline ~= vim.bo[ctx.buf].endofline
+      if changed then
+        vim.api.nvim_buf_call(ctx.buf, function()
+          -- Break the undo block without discarding the user's earlier unsaved edits.
+          vim.cmd('let &l:undolevels = &l:undolevels')
+          local before_seq, before_eol = vim.fn.undotree().seq_cur, vim.bo[ctx.buf].endofline
+          vim.api.nvim_buf_set_lines(ctx.buf, 0, -1, false, replacement.lines)
+          restoring_eol = true
+          vim.bo[ctx.buf].endofline = replacement.endofline
+          restoring_eol = false
+          track_eol(ctx.buf, before_seq, before_eol, vim.fn.undotree().seq_cur, replacement.endofline)
+        end)
+        if not snapshots[ctx.buf] then
+          vim.api.nvim_create_autocmd('BufWipeout', { buffer = ctx.buf, once = true, callback = function() snapshots[ctx.buf] = nil end })
         end
+        snapshots[ctx.buf] = ctx.saved
+        require('hodocode.edit_marks').set(ctx.buf, ctx.content, text(ctx.buf))
+        finish_status(state)
+        local focused = vim.api.nvim_get_current_win() == output_win
+        if vim.api.nvim_win_is_valid(output_win) then vim.api.nvim_win_close(output_win, true) end
+        if focused and vim.api.nvim_win_is_valid(ctx.win) then vim.api.nvim_set_current_win(ctx.win) end
+        vim.cmd.redraw()
+        vim.notify('HodoCode: バッファを更新しました（未保存）。🤖が変更行です。dで差分を確認できます。')
+        return
       end
     end
+    finish_status(state)
     render(lines)
   end))
-  if not ok then cancel(state); error_message('エージェントを起動できません'); return end
+  if not ok then
+    local message = failure_text(state, 'spawn_failed')
+    cancel(state, 'spawn_failed'); render({ message }); error_message(message); return
+  end
   state.process = process
+  if active == state and state.running and state.phase == 'starting' then status(state, 'waiting', true) end
   if state.failure or state.cancelled then process:kill(15) end
 end
 
@@ -271,7 +363,7 @@ function M.run(config, prompt)
   end
   local ctx, err = capture()
   if not ctx then error_message(err); return end
-  local state = { output = '', stderr = '', cancelled = false }
+  local state = { cancelled = false, source = ctx.buf }
   active = state
   if not prompt or prompt == '' then
     local _, _, close = require('hodocode.edit_prompt').open(function(value)

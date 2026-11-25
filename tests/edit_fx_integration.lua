@@ -5,16 +5,20 @@ local function run()
   local uv = vim.uv or vim.loop
   root = assert(uv.fs_realpath(root))
   local python = vim.fn.exepath('python3')
-  local fake = '#!' .. python .. '\n' .. [[import json,os,stat,sys
+  local fake = '#!' .. python .. '\n' .. [[import json,os,stat,sys,time
 assert sys.argv[1:7]==['--no-additional-dirs','ask','--ask','--json','--no-save','--system']
+assert os.environ['HODOCODE_EDIT_PROTOCOL']=='2'
+assert os.environ['HODOCODE_AGENT_TIMEOUT_MS'] in ('5000','1500')
+assert 'ORIGINAL supplied' in sys.argv[7] and 'FULL replacement' not in sys.argv[7]
 r=json.load(sys.stdin)
 assert set(r)=={'prompt','buffer'}
 b=r['buffer']
 assert b['name']=='main.py' and 'path' not in b
-assert '*user* `text`' in b['content'] and r['prompt']=='change value'
+assert '*user* `text`' in b['content'] and r['prompt'] in ('change value','timeout')
+if r['prompt']=='timeout': time.sleep(10)
 assert stat.S_IMODE(os.stat(os.getcwd()).st_mode)==0o700
 assert ROOT not in os.getcwd() and ROOT not in json.dumps(r)
-result={'message':'編集しました','content':b['content'].replace('value = 1','value = 2')}
+result={'message':'編集しました','edits':[{'old_text':'value = 1','new_text':'value = 2'}]}
 json.dump({'output':json.dumps(result,ensure_ascii=False),'final_output':'WRONG: stripped formatted source'},sys.stdout,ensure_ascii=False)
 ]]
   fake = fake:gsub('ROOT', string.format('%q', root))
@@ -38,6 +42,19 @@ json.dump({'output':json.dumps(result,ensure_ascii=False),'final_output':'WRONG:
   assert(vim.deep_equal(vim.fn.readfile(path), { 'value = 1' }), 'must not autosave')
   if vim.bo.buftype == 'nofile' then vim.api.nvim_win_close(0, true) end
   assert(vim.api.nvim_get_current_buf() == buf, 'successful edit must return to source')
+  assert(#vim.api.nvim_list_tabpages() == 1, 'must not open diff automatically')
+  assert(agent.status(buf).phase == 'done' and not agent.status(buf).running)
+  local marks = vim.api.nvim_buf_get_extmarks(buf, vim.api.nvim_create_namespace('HodoCodeAgentChanges'), 0, -1, {})
+  assert(#marks > 0, 'partial edit must mark changed lines')
+  config.agent_timeout_ms = 1500
+  agent.run(config, 'timeout')
+  local failure_win = vim.api.nvim_get_current_win()
+  assert(vim.wait(3000, function() return not agent.status(buf).running end, 10), 'helper timeout never completed')
+  assert(agent.status(buf).code == 'timeout' and agent.status(buf).phase == 'error', 'inner deadline classification lost')
+  assert(vim.api.nvim_buf_get_lines(buf, 0, 1, false)[1] == 'value = 2', 'timeout changed buffer')
+  assert(vim.deep_equal(vim.fn.readfile(path), { 'value = 1' }), 'timeout saved buffer')
+  vim.api.nvim_win_close(failure_win, true)
+  vim.api.nvim_set_current_buf(buf)
   agent.diff()
   local before
   for _, win in ipairs(vim.api.nvim_tabpage_list_wins(0)) do
@@ -50,7 +67,7 @@ json.dump({'output':json.dumps(result,ensure_ascii=False),'final_output':'WRONG:
   agent.stop()
   vim.env.PATH = old_path
   vim.fn.delete(root, 'rf')
-  print('PASS: actual edit-fx adapter subprocess + local fake fx, private cwd, basename-only provider payload, raw pointer/backtick preservation, dirty buffer apply and saved diff; no network')
+  print('PASS: actual edit-fx subprocess + local fake fx, negotiated partial edits, private cwd/basename/raw literals, configured inner timeout, dirty apply/marks/explicit saved diff; no network')
 end
 local ok, err = xpcall(run, debug.traceback)
 if not ok then io.stderr:write(err .. '\n'); vim.cmd('cquit 1') else vim.cmd('qa!') end
