@@ -44,6 +44,7 @@ function M.scroll(delta)
 end
 
 function M.float(lines, title, context)
+  local source_win = vim.api.nvim_get_current_win()
   local buf = vim.api.nvim_create_buf(false, true)
   vim.bo[buf].bufhidden = 'wipe'
   vim.bo[buf].filetype = 'markdown'
@@ -69,10 +70,11 @@ function M.float(lines, title, context)
       if owned == win then table.remove(floats, i); break end
     end
   end })
-  for _, key in ipairs({ 'q', '<C-c>', '<C-d>' }) do
+  for _, key in ipairs({ 'q', '<Esc>', '<C-c>', '<C-d>' }) do
     vim.keymap.set('n', key, function()
       if vim.api.nvim_win_is_valid(win) then vim.api.nvim_win_close(win, true) end
-      if key ~= 'q' then require('hodocode.mode').stop() end
+      if vim.api.nvim_win_is_valid(source_win) then vim.api.nvim_set_current_win(source_win) end
+      if key == '<C-c>' or key == '<C-d>' then require('hodocode.mode').stop() end
     end, { buffer = buf })
   end
   vim.keymap.set('n', '[', function() M.scroll(-1) end, { buffer = buf })

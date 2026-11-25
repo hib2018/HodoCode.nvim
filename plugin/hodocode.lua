@@ -6,7 +6,7 @@ local function invoke(method, arg)
   if not ok then vim.notify('HodoCode: ' .. tostring(err), vim.log.levels.ERROR) end
 end
 for command, method in pairs({
-  HodoCodeFunctions = 'functions', HodoCodeCalls = 'calls', HodoCodeSyntax = 'syntax',
+  HodoCode = 'actions', HodoCodeFunctions = 'functions', HodoCodeCalls = 'calls', HodoCodeSyntax = 'syntax',
   HodoCodeReload = 'reload', HodoCodeDiff = 'diff',
   HodoCodeMode = 'mode', HodoCodeModeExit = 'exit_mode',
   HodoCodeFollow = 'follow', HodoCodeGraph = 'graph', HodoCodeChat = 'chat',

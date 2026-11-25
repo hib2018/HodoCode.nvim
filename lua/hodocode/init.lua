@@ -100,6 +100,10 @@ local function checked(ctx, callback)
   end
 end
 
+function M.actions()
+  require('hodocode.mode').actions()
+end
+
 function M.functions()
   with_context(function(ctx, client)
     client:request('functions', {}, checked(ctx, function(functions)

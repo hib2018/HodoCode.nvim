@@ -86,7 +86,7 @@ local function run()
   assert(hc.help == nil, 'help should not add a top-level init API')
   local guide = one_guide()
   local wide_lines = lines(guide)
-  assert(#wide_lines == 4, 'normal-width guide must have four grouped rows')
+  assert(#wide_lines == 5, 'normal-width guide must include workflow and status rows')
   local guide_text = table.concat(wide_lines, '\n')
   for _, hint in ipairs({ '?', '操作一覧', '移動', '表示', 'AI', 'n/N', 'Enter', 'b', 'g/G', 't', 'f', 'K', 'E', 'e', 'x', 'q', 'Esc' }) do
     contains(guide_text, hint, 'guide primary workflow')

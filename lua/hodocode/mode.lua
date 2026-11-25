@@ -48,17 +48,21 @@ function M.stop()
 end
 
 function M.help()
-  local current = state
-  if not current then return end
+  local current = state or {}
   if current.help and vim.api.nvim_win_is_valid(current.help) then vim.api.nvim_set_current_win(current.help); return end
   local lines = {
     '# HodoCode 操作一覧', '',
     '基本: n/N で呼び出し名を選ぶ → Enter で定義へ進む → b で読解履歴を戻る。',
-    '以下のキーはソースバッファ上で有効。h/j/k/l と / 検索はNeovim標準です（? は操作一覧）。',
+    '以下の専用キーは読解モード中のソース上で有効。h/j/k/l と / 検索はNeovim標準です（? は操作一覧）。',
     '下線は関数名、黄色の強調はジャンプ可能な呼び出し名です。',
     'n/N は現在の関数内だけを移動し、未解決・外部の呼び出し名も含みます。',
     'Enter は確定したローカル定義だけへ移動します。3n などの回数指定も使えます。',
     'g/G はファイルではなく現在の関数の先頭／末尾です。',
+    ':HodoCode で分類付きの操作を選択（キー操作はモード中のみ）。',
+    '読解: :write → n/N → Enter → b。s は構文・変数情報、m は図。',
+    '未保存でも編集・E/a の解説・A のAI編集・d の差分を利用できます。',
+    '解析・移動・図は保存済みソース用です。必要なら :write してください。自動保存しません。',
+    'AI: A で指示 → d で変更確認、x で中止。E は関数全体、a はカーソル行。',
   }
   for _, section in ipairs(sections) do
     lines[#lines + 1], lines[#lines + 2] = '', '## ' .. section[1]
@@ -80,6 +84,45 @@ function M.help()
   end
 end
 
+function M.actions()
+  local win = state and state.win or vim.api.nvim_get_current_win()
+  if not vim.api.nvim_win_is_valid(win) or vim.api.nvim_win_get_config(win).relative ~= '' then
+    vim.notify('HodoCode: ソースバッファで実行してください', vim.log.levels.WARN)
+    return
+  end
+  local buf = vim.api.nvim_win_get_buf(win)
+  if vim.bo[buf].buftype ~= '' then return end
+  local tick, name = vim.api.nvim_buf_get_changedtick(buf), vim.api.nvim_buf_get_name(buf)
+  local cursor = vim.api.nvim_win_get_cursor(win)
+  local items = { { method = 'mode', label = 'モード | :HodoCodeMode / <leader>h — 読解モード開始' } }
+  for _, section in ipairs(sections) do
+    for _, key in ipairs(section[2]) do
+      items[#items + 1] = { method = actions[key][1], label = section[1] .. ' | ' .. key .. ' — ' .. actions[key][2] }
+    end
+  end
+  vim.ui.select(items, { prompt = 'HodoCode 操作（解析は :write 後 / 自動保存なし）',
+    format_item = function(item) return item.label end }, function(item)
+    if not item then return end
+    if not vim.api.nvim_win_is_valid(win) or not vim.api.nvim_buf_is_valid(buf)
+      or vim.api.nvim_win_get_buf(win) ~= buf or vim.api.nvim_buf_get_name(buf) ~= name
+      or vim.api.nvim_buf_get_changedtick(buf) ~= tick
+      or not vim.deep_equal(vim.api.nvim_win_get_cursor(win), cursor) then
+      vim.notify('HodoCode: 選択中にソースが変わったため操作を中止しました', vim.log.levels.WARN)
+      return
+    end
+    vim.api.nvim_set_current_win(win)
+    local ok, err = pcall(function()
+      if item.method == 'help' then M.help() else require('hodocode')[item.method]() end
+    end)
+    if not ok then vim.notify('HodoCode: ' .. tostring(err), vim.log.levels.ERROR) end
+  end)
+end
+
+local phases = {
+  starting = '開始中', waiting = '応答待ち', received = '応答受信', validating = '検証中',
+  applying = '反映中', done = '完了', error = '失敗', cancelled = '中止', prompt = '指示入力',
+}
+
 local function guide(current)
   local width = math.max(1, math.min(90, vim.o.columns - 4))
   local lines
@@ -97,6 +140,20 @@ local function guide(current)
     lines = { 'HodoCode | ?:操作一覧', 'n/N → Enter → b', 'q/Esc:終了 v:編集' }
   else
     lines = { '? help', 'n/N Enter b', 'q exit' }
+  end
+  local config = require('hodocode').config
+  local agent = require('hodocode.agent')
+  local status = agent.status and agent.status(current.buf)
+  local file = vim.bo[current.buf].modified and '未保存 :writeで解析' or '保存済み'
+  local configured = type(config.agent) == 'table' and type(config.agent[1]) == 'string' and config.agent[1] ~= ''
+  local phase = status and (phases[status.phase] or status.phase) or (configured and '待機' or '未設定')
+  if width >= 56 then
+    local text = file .. ' | 編集AI: ' .. phase
+    local detail = status and status.phase == 'done' and ' d:差分' or ''
+    if vim.fn.strdisplaywidth(text .. detail) <= width then text = text .. detail end
+    lines[#lines + 1] = text .. ' | :HodoCode 操作選択'
+  elseif width >= 24 then
+    lines[#lines + 1] = (vim.bo[current.buf].modified and '未保存' or '保存済み') .. ' | 編集:' .. phase
   end
   local height = math.max(1, math.min(#lines, vim.o.lines - vim.o.cmdheight - 3))
   if height == 1 then lines = { width >= 8 and '?:help q' or 'q ?' }
@@ -135,7 +192,7 @@ function M.start()
   end
   if state and state.buf == buf then return end
   M.stop()
-  local current = { buf = buf, bindings = {}, group = vim.api.nvim_create_augroup('HodoCodeMode', { clear = true }) }
+  local current = { buf = buf, win = vim.api.nvim_get_current_win(), bindings = {}, group = vim.api.nvim_create_augroup('HodoCodeMode', { clear = true }) }
   state = current
   for key in pairs(vim.tbl_extend('force', actions, exits)) do
     local previous = vim.fn.maparg(key, 'n', false, true)
@@ -162,6 +219,12 @@ function M.start()
   vim.api.nvim_create_autocmd('VimLeavePre', { group = current.group, callback = M.stop })
   vim.api.nvim_create_autocmd('VimResized', { group = current.group, callback = function()
     if state == current then guide(current) end
+  end })
+  vim.api.nvim_create_autocmd('BufModifiedSet', { group = current.group, buffer = buf, callback = function()
+    if state == current then guide(current) end
+  end })
+  vim.api.nvim_create_autocmd('User', { group = current.group, pattern = 'HodoCodeAgentStatus', callback = function(event)
+    if state == current and event.data and event.data.buf == buf then guide(current) end
   end })
   guide(current)
   require('hodocode.marker').start(buf, current.group)
