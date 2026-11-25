@@ -10,6 +10,9 @@ test: build
 	cd backend && go test ./cmd/hodocode ./internal/...
 	nvim --headless -u NONE -l tests/headless.lua
 	nvim --headless -u NONE -l tests/agent_edit.lua
+	nvim --headless -u NONE -l tests/edit_prompt.lua
+	nvim --headless -u NONE -l tests/edit_marks.lua
+	nvim --headless -u NONE -l tests/edit_flow.lua
 	nvim --headless -u NONE -l tests/edit_fx_integration.lua
 	nvim --headless -u NONE -l tests/import_syntax.lua
 	nvim --headless -u NONE -l tests/variable_syntax.lua
