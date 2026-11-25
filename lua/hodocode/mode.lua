@@ -8,7 +8,7 @@ local actions = {
   ['['] = { 'help_up', 'ポップアップを上へスクロール' }, [']'] = { 'help_down', 'ポップアップを下へスクロール' },
   v = { 'exit_mode', '編集へ戻る' },
   f = { 'functions', '関数一覧' }, s = { 'syntax', '構文・関数・変数情報' }, r = { 'reload', '再解析' },
-  a = { 'explain_line', 'カーソル行を解説（指示可・空欄で通常解説）' }, x = { 'cancel', 'AI中止' }, d = { 'diff', '従来のAI編集前との差分' },
+  a = { 'explain_line', 'カーソル行を解説（指示可・空欄で通常解説）' }, A = { 'agent', 'AIでバッファを編集（指示入力）' }, x = { 'cancel', 'AI中止' }, d = { 'diff', '保存済み内容との差分' },
   ['<CR>'] = { 'follow', '呼び出し先' }, m = { 'graph', '図' },
   z = { 'notes_clear', '注釈消去' }, K = { 'notes_show', '注釈全文' },
   ['?'] = { 'help', '操作一覧' },
@@ -16,7 +16,7 @@ local actions = {
 local sections = {
   { '基本の移動', { 'n', 'N', '<CR>', 'b', 'g', 'G' } },
   { '表示と読解', { 't', 'f', 's', 'm', 'K', 'c', 'z', '[', ']', 'r', '?' } },
-  { 'AI', { 'E', 'a', 'e', 'i', 'x', 'd' } },
+  { 'AI', { 'E', 'a', 'A', 'e', 'i', 'x', 'd' } },
   { '終了', { 'v' } },
 }
 local exits = { ['<Esc>'] = true, q = true, ['<C-c>'] = true, ['<C-d>'] = true }

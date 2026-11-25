@@ -17,7 +17,7 @@ local function run()
   local hc = require('hodocode')
   local mode = require('hodocode.mode')
   local dispatched = {}
-  for _, name in ipairs({ 'functions', 'calls', 'syntax', 'reload', 'explain', 'explain_line', 'diff', 'follow', 'graph', 'chat', 'notes_toggle', 'notes_clear', 'notes_show', 'cancel', 'next_call', 'previous_call', 'back', 'function_start', 'function_end', 'explain_now', 'help_up', 'help_down' }) do
+  for _, name in ipairs({ 'functions', 'calls', 'syntax', 'reload', 'explain', 'explain_line', 'agent', 'diff', 'follow', 'graph', 'chat', 'notes_toggle', 'notes_clear', 'notes_show', 'cancel', 'next_call', 'previous_call', 'back', 'function_start', 'function_end', 'explain_now', 'help_up', 'help_down' }) do
     local method = name
     hc[method] = function() dispatched[#dispatched + 1] = method end
   end
@@ -66,7 +66,7 @@ local function run()
       assert(actual[field] == expected[field], label .. ': changed mapping field ' .. field)
     end
   end
-  local keys = { 'f', 'c', 's', 'r', 'a', 'x', 'd', 'g', 'G', 't', 'e', 'i', 'E', 'v', 'z', 'K', 'm', 'n', 'N', 'b', '[', ']', '?', 'q', '<C-c>', '<C-d>', '<CR>', '<Esc>' }
+  local keys = { 'f', 'c', 's', 'r', 'a', 'A', 'x', 'd', 'g', 'G', 't', 'e', 'i', 'E', 'v', 'z', 'K', 'm', 'n', 'N', 'b', '[', ']', '?', 'q', '<C-c>', '<C-d>', '<CR>', '<Esc>' }
   local local_calls, global_calls = 0, 0
   local local_callback = function() local_calls = local_calls + 1 end
   local global_callback = function() global_calls = global_calls + 1 end
@@ -109,7 +109,7 @@ local function run()
 
   local actions = {
     { 'f', 'functions' }, { 't', 'calls' }, { 's', 'syntax' }, { 'r', 'reload' },
-    { 'x', 'cancel' }, { 'd', 'diff' }, { 'a', 'explain_line' }, { '<CR>', 'follow' },
+    { 'x', 'cancel' }, { 'd', 'diff' }, { 'a', 'explain_line' }, { 'A', 'agent' }, { '<CR>', 'follow' },
     { 'm', 'graph' }, { 'e', 'chat' }, { 'i', 'chat' }, { 'c', 'notes_toggle' }, { 'z', 'notes_clear' }, { 'K', 'notes_show' },
     { 'n', 'next_call' }, { 'N', 'previous_call' }, { 'b', 'back' }, { 'g', 'function_start' }, { 'G', 'function_end' },
     { 'E', 'explain_now' }, { '[', 'help_up' }, { ']', 'help_down' },
