@@ -148,6 +148,9 @@ end
 local function cancel(state)
   state.cancelled = true
   if active == state then active = nil end
+  local close = state.prompt_close
+  state.prompt_close = nil
+  if close then close() end
   if state.process then state.process:kill(15) end
   prepare.clean_cwd(state)
 end
@@ -244,7 +247,13 @@ local function launch(config, prompt, state, ctx)
             vim.api.nvim_create_autocmd('BufWipeout', { buffer = ctx.buf, once = true, callback = function() snapshots[ctx.buf] = nil end })
           end
           snapshots[ctx.buf] = ctx.saved
-          lines[#lines + 1] = 'バッファへ反映しました（未保存）。qで戻り、:HodoCodeDiffで保存済み内容との差分を確認できます。'
+          require('hodocode.edit_marks').set(ctx.buf, ctx.content, text(ctx.buf))
+          local focused = vim.api.nvim_get_current_win() == output_win
+          vim.api.nvim_win_close(output_win, true)
+          if focused and vim.api.nvim_win_is_valid(ctx.win) then vim.api.nvim_set_current_win(ctx.win) end
+          vim.cmd.redraw()
+          vim.notify('HodoCode: バッファを更新しました（未保存）。🤖が変更行です。dで差分を確認できます。')
+          return
         end
       end
     end
@@ -265,11 +274,14 @@ function M.run(config, prompt)
   local state = { output = '', stderr = '', cancelled = false }
   active = state
   if not prompt or prompt == '' then
-    vim.ui.input({ prompt = 'HodoCode エージェントへの指示: ' }, function(value)
+    local _, _, close = require('hodocode.edit_prompt').open(function(value)
       if state.cancelled then return end
-      if not value or value == '' then cancel(state); return end
+      state.prompt_close = nil
       launch(config, value, state, ctx)
+    end, function()
+      if not state.cancelled then cancel(state) end
     end)
+    state.prompt_close = close
   else
     launch(config, prompt, state, ctx)
   end

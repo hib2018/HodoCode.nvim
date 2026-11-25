@@ -36,7 +36,8 @@ json.dump({'output':json.dumps(result,ensure_ascii=False),'final_output':'WRONG:
   assert(vim.wait(6000, function() return vim.api.nvim_buf_get_lines(buf, 0, 1, false)[1] == 'value = 2' end, 10), table.concat(notices, '\n') .. '\n' .. table.concat(vim.api.nvim_buf_get_lines(0, 0, -1, false), '\n'))
   assert(vim.bo[buf].modified and vim.api.nvim_buf_get_lines(buf, 1, 2, false)[1] == '# *user* `text`')
   assert(vim.deep_equal(vim.fn.readfile(path), { 'value = 1' }), 'must not autosave')
-  vim.api.nvim_win_close(0, true)
+  if vim.bo.buftype == 'nofile' then vim.api.nvim_win_close(0, true) end
+  assert(vim.api.nvim_get_current_buf() == buf, 'successful edit must return to source')
   agent.diff()
   local before
   for _, win in ipairs(vim.api.nvim_tabpage_list_wins(0)) do

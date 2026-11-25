@@ -78,7 +78,8 @@ json.dump({'message':'done','content':r['buffer']['content']+'// agent\n'},sys.s
   wait(function() return table.concat(vim.api.nvim_buf_get_lines(source, 0, -1, false), '\n'):find('// agent', 1, true) ~= nil end, 'agent edit')
   assert(vim.bo[source].modified, 'agent must not silently save')
   assert(not table.concat(vim.fn.readfile(root .. '/main.go'), '\n'):find('// agent', 1, true))
-  vim.api.nvim_win_close(0, true)
+  if vim.bo.buftype == 'nofile' then vim.api.nvim_win_close(0, true) end
+  assert(vim.api.nvim_get_current_buf() == source, 'successful edit must return to source')
   hc.diff()
   assert(#vim.api.nvim_tabpage_list_wins(0) == 2 and vim.wo.diff, 'diff tab')
   local found_before = false

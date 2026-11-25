@@ -87,12 +87,12 @@ local function guide(current)
     lines = { 'HodoCode MODE | ?:操作一覧 | q/Esc:終了 v:編集',
       '移動 n/N:呼出名 → Enter:定義(黄色) → b:戻る | g/G:関数先頭/末尾',
       '表示 t:ツリー f:関数一覧 s:構文 K:注釈全文',
-      'AI E:関数解説 a:行解説 e:チャット x:中止' }
+      'AI A:編集 d:差分 E:関数解説 a:行解説 e:会話 x:中止' }
   elseif width >= 56 then
     lines = { 'HodoCode MODE | ?:操作一覧 | q/Esc:終了',
       '移動 n/N:選択 Enter:定義 b:戻る',
       '表示 t:ツリー f:一覧 K:注釈',
-      'AI E:関数解説 e:チャット x:中止' }
+      'AI A:編集 d:差分 E:解説 e:会話 x:中止' }
   elseif width >= 24 then
     lines = { 'HodoCode | ?:操作一覧', 'n/N → Enter → b', 'q/Esc:終了 v:編集' }
   else

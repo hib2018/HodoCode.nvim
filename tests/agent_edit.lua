@@ -66,14 +66,20 @@ else:
     wait(function() return uv.fs_stat(trace) ~= nil end, 'adapter stdin')
     local record = vim.json.decode(read(trace))
     assert(record.mode == 448 and record.cwd ~= root, 'request cwd must be private 0700')
-    return { buf = popup, win = win, cwd = record.cwd, modified = record.modified }
+    return { buf = popup, win = win, source = buf, cwd = record.cwd, modified = record.modified }
   end
   local function finish(request)
-    wait(function() return not lines(request.buf):find('実行中…', 1, true) end, 'adapter completion')
-    assert(not uv.fs_stat(request.cwd), 'request cwd leaked after completion')
+    wait(function()
+      return not vim.api.nvim_buf_is_valid(request.buf) or not lines(request.buf):find('実行中…', 1, true)
+    end, 'adapter completion')
+    wait(function() return not uv.fs_stat(request.cwd) end, 'request cwd cleanup')
   end
   local function close(request)
-    vim.api.nvim_set_current_win(request.win); key(request.buf, 'q')
+    if vim.api.nvim_win_is_valid(request.win) then
+      vim.api.nvim_set_current_win(request.win); key(request.buf, 'q')
+    else
+      vim.api.nvim_set_current_buf(request.source)
+    end
   end
   local function baseline(buf, expected, current_disk)
     vim.api.nvim_set_current_buf(buf)
@@ -215,11 +221,12 @@ else:
     close(request)
   end
   -- Capture must precede waiting for an interactive prompt.
-  local input = vim.ui.input
+  local prompt = require('hodocode.edit_prompt')
+  local open = prompt.open
   for _, kind in ipairs({ 'buffer', 'disk', 'options', 'window' }) do
     local buf, filename = file('prompt\n')
     local callback
-    vim.ui.input = function(_, cb) callback = cb end
+    prompt.open = function(submit) callback = submit; return nil, nil, function() end end
     local cfg, trace = config('edit', 'prompt\n', 'UNSAFE\n')
     agent.run(cfg)
     assert(callback, 'prompt not requested')
@@ -227,10 +234,12 @@ else:
     elseif kind == 'disk' then write(filename, 'external\n')
     elseif kind == 'options' then vim.bo[buf].bomb = true
     else vim.cmd.enew() end
+    local current = vim.api.nvim_get_current_buf()
     callback('edit')
     assert(not uv.fs_stat(trace) and not lines(buf):find('UNSAFE', 1, true), 'prompt capture race: ' .. kind)
+    assert(vim.api.nvim_get_current_buf() == current, 'rejected prompt changed buffers: ' .. kind)
   end
-  vim.ui.input = input
+  prompt.open = open
   for _, cancel in ipairs({ 'q', 'stop' }) do
     local buf = file('cancel\n')
     request = start(buf, 'slow', 'cancel\n', 'LATE\n')

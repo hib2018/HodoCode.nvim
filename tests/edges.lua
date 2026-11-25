@@ -97,7 +97,8 @@ local function run()
   clients.start = real_start
 
   -- Adapter execution is entirely mocked; callbacks are deliberately controlled.
-  local system, input = vim.system, vim.ui.input
+  local prompt = require('hodocode.edit_prompt')
+  local system, open = vim.system, prompt.open
   local invocations = {}
   vim.system = function(argv, options, callback)
     assert(argv[1] == 'edge-test-adapter', 'unexpected adapter')
@@ -141,7 +142,7 @@ local function run()
 
   focus_source()
   local submitted
-  vim.ui.input = function(_, callback) submitted = callback end
+  prompt.open = function(submit) submitted = submit; return nil, nil, function() end end
   hc.agent('')
   assert(type(submitted) == 'function', 'agent prompt callback missing')
   local other = vim.api.nvim_create_buf(true, false)
@@ -152,7 +153,7 @@ local function run()
   drain()
   assert(#invocations == 0, 'delayed prompt sent a different buffer to the adapter')
   assert(vim.api.nvim_get_current_buf() == other, 'rejected prompt changed buffers')
-  vim.ui.input = input
+  prompt.open = open
 
   focus_source()
   vim.api.nvim_buf_set_lines(source, -1, -1, false, { '// preserve unsaved user content' })
