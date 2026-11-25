@@ -1,0 +1,43 @@
+local function run()
+  vim.opt.runtimepath:prepend(vim.fn.getcwd())
+  local apply = require('hodocode.edit_patch').apply
+  local function good(source, edits, expected)
+    local original = vim.deepcopy(edits)
+    local actual, err = apply(source, edits, 1024 * 1024)
+    assert(actual == expected, tostring(err) .. ': ' .. tostring(actual))
+    assert(vim.deep_equal(original, edits), 'edit payload mutated')
+  end
+  local function bad(source, edits, limit)
+    local actual, err = apply(source, edits, limit or 1024 * 1024)
+    assert(actual == nil and type(err) == 'string' and err ~= '', 'invalid patch accepted')
+  end
+  good('one\ntwo\nthree\n', { { old_text = 'three', new_text = '3' }, { old_text = 'one', new_text = '1' } }, '1\ntwo\n3\n')
+  good('abc', { { old_text = 'a', new_text = 'x' }, { old_text = 'b', new_text = 'y' } }, 'xyc')
+  good('abc', { { old_text = 'a', new_text = 'b' }, { old_text = 'b', new_text = 'c' } }, 'bcc')
+  good('日本語 *p `code`\n', { { old_text = '*p', new_text = '**p' } }, '日本語 **p `code`\n')
+  good('abc', { { old_text = 'abc', new_text = '' } }, '')
+  good('', { { old_text = '', new_text = 'new\n' } }, 'new\n')
+  good('abc', {}, 'abc')
+  bad('abc', nil)
+  bad('abc', vim.empty_dict())
+  bad('abc', { wrong = true })
+  bad('abc', { false })
+  bad('abc', { { old_text = 'none', new_text = 'x' } })
+  bad('aaa', { { old_text = 'aa', new_text = 'x' } })
+  bad('abc', { { old_text = 'ab', new_text = 'x' }, { old_text = 'bc', new_text = 'y' } })
+  bad('abc', { { old_text = 'a', new_text = 'x' }, { old_text = 'a', new_text = 'y' } })
+  bad('abc', { { old_text = '', new_text = 'x' } })
+  bad('', { { old_text = '', new_text = 'x' }, { old_text = '', new_text = 'y' } })
+  bad('abc', { { old_text = 'a', new_text = 'x', file = 'other.go' } })
+  bad('abc', { { old_text = 'a', new_text = false } })
+  bad('abc', { { old_text = 'a', new_text = '\0' } })
+  bad('abc', { { old_text = 'a\0', new_text = 'x' } })
+  bad('abc', { { old_text = 'a', new_text = '12345' } }, 6)
+  bad('', { { old_text = '', new_text = '12345' } }, 4)
+  local many = {}
+  for _ = 1, 257 do many[#many + 1] = { old_text = 'a', new_text = 'x' } end
+  bad('abc', many)
+  print('PASS: atomic original-snapshot exact patches, order independence, Unicode/literals, empty insertion, ambiguity/overlap/schema/size bounds; no file writes')
+end
+local ok, err = xpcall(run, debug.traceback)
+if not ok then io.stderr:write(err .. '\n'); vim.cmd('cquit 1') else vim.cmd('qa!') end
