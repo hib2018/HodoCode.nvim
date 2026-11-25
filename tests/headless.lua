@@ -68,8 +68,8 @@ local function run()
   assert(vim.api.nvim_win_get_cursor(0)[1] == 3)
   vim.ui.select = select
 
+  local expectedSaved = table.concat(vim.fn.readfile(root .. '/main.go', 'b'), '\n')
   vim.api.nvim_buf_set_lines(source, -1, -1, false, { '// unsaved' })
-  local before = table.concat(vim.api.nvim_buf_get_lines(source, 0, -1, false), '\n') .. '\n'
   hc.config.agent = { 'python3', '-c', [[import json,sys
 r=json.load(sys.stdin)
 assert r['buffer']['modified'] and r['prompt']=='update'
@@ -85,10 +85,10 @@ json.dump({'message':'done','content':r['buffer']['content']+'// agent\n'},sys.s
   for _, win in ipairs(vim.api.nvim_tabpage_list_wins(0)) do
     local buf = vim.api.nvim_win_get_buf(win)
     if buf ~= source then
-      found_before = table.concat(vim.api.nvim_buf_get_lines(buf, 0, -1, false), '\n') .. '\n' == before
+      found_before = table.concat(vim.api.nvim_buf_get_lines(buf, 0, -1, false), '\n') .. '\n' == expectedSaved
     end
   end
-  assert(found_before, 'diff baseline must include preexisting unsaved edits, not HEAD')
+  assert(found_before, 'diff baseline must be saved disk content, not HEAD or preexisting unsaved edits')
   vim.cmd.tabclose()
   vim.api.nvim_win_set_buf(0, source)
   hc.config.agent = { 'python3', '-c', [[import json,sys,time
