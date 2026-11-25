@@ -6,8 +6,11 @@ build:
 test: build
 	go test tools/stdlib-docs/main.go tools/stdlib-docs/main_test.go
 	python3 -m unittest discover -s tools -p test_translate_stdlib.py
+	python3 -m unittest discover -s tools -p test_edit_fx.py
 	cd backend && go test ./cmd/hodocode ./internal/...
 	nvim --headless -u NONE -l tests/headless.lua
+	nvim --headless -u NONE -l tests/agent_edit.lua
+	nvim --headless -u NONE -l tests/edit_fx_integration.lua
 	nvim --headless -u NONE -l tests/import_syntax.lua
 	nvim --headless -u NONE -l tests/variable_syntax.lua
 	nvim --headless -u NONE -l tests/variable_integration.lua
