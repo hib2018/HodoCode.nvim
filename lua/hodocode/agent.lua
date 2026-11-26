@@ -1,10 +1,12 @@
 local M = {}
-local ui = require('hodocode.ui')
+local session = require('hodocode.session')
 local prepare = require('hodocode.prepare')
 local events = require('hodocode.edit_events')
 local uv = vim.uv or vim.loop
-local active, snapshots, views, undo_eol = nil, {}, {}, {}
+local active, draft, snapshots, undo_eol = nil, nil, {}, {}
 local statuses = {}
+vim.api.nvim_create_autocmd('BufWipeout', { callback = function(ev) statuses[ev.buf] = nil end })
+local shutting_down = false
 
 local restoring_eol = false
 vim.api.nvim_create_autocmd('OptionSet', { pattern = 'endofline', callback = function()
@@ -124,10 +126,11 @@ local function text(buf)
   return table.concat(vim.api.nvim_buf_get_lines(buf, 0, -1, false), '\n') .. (vim.bo[buf].endofline and '\n' or '')
 end
 
-local function capture()
-  local buf = vim.api.nvim_get_current_buf()
+local function capture(target)
+  local buf = target.buf
+  if not vim.api.nvim_buf_is_loaded(buf) then return nil, '対象バッファが読み込まれていません' end
   local path = vim.api.nvim_buf_get_name(buf)
-  if vim.bo[buf].buftype ~= '' or path == '' or not vim.bo[buf].modifiable then
+  if vim.bo[buf].buftype ~= '' or path == '' or not vim.bo[buf].modifiable or vim.bo[buf].readonly then
     return nil, '編集可能な通常のファイルバッファで実行してください'
   end
   if not supported_buffer(buf) or not supported(text(buf)) then
@@ -135,11 +138,14 @@ local function capture()
   end
   local saved, err = disk(path)
   if not saved then return nil, err end
-  local ctx = { buf = buf, win = vim.api.nvim_get_current_win(), path = path, saved = saved, content = text(buf),
-    options = options(buf), tick = vim.api.nvim_buf_get_changedtick(buf), cursor = vim.api.nvim_win_get_cursor(0) }
+  local cursor = target.cursor or { 1, 0 }
+  if target.win and vim.api.nvim_win_is_valid(target.win) and vim.api.nvim_win_get_buf(target.win) == buf then
+    cursor = vim.api.nvim_win_get_cursor(target.win)
+  end
+  local ctx = { buf = buf, path = path, saved = saved, content = text(buf),
+    options = options(buf), tick = vim.api.nvim_buf_get_changedtick(buf), cursor = cursor }
   function ctx.valid()
-    if not vim.api.nvim_win_is_valid(ctx.win) or vim.api.nvim_win_get_buf(ctx.win) ~= buf
-      or not vim.api.nvim_buf_is_valid(buf) or vim.api.nvim_buf_get_name(buf) ~= path
+    if not vim.api.nvim_buf_is_loaded(buf) or vim.api.nvim_buf_get_name(buf) ~= path
       or vim.api.nvim_buf_get_changedtick(buf) ~= ctx.tick or not vim.deep_equal(options(buf), ctx.options) then return false end
     local now = disk(path)
     return now and now.identity == saved.identity and now.content == saved.content
@@ -157,13 +163,16 @@ local function status(state, phase, running, code)
   if state.started and vim.api.nvim_buf_is_valid(state.source) then
     statuses[state.source] = { phase = phase, elapsed_ms = elapsed(state), running = running, code = code }
   end
+  session.get().last_status = { source = state.source, phase = phase, elapsed_ms = elapsed(state), running = running, code = code }
   if changed then
     vim.api.nvim_exec_autocmds('User', { pattern = 'HodoCodeAgentStatus',
       data = { buf = state.source, phase = phase, running = running } })
   end
+  session.changed()
 end
 
 function M.status(buf)
+  if not vim.api.nvim_buf_is_valid(buf) then return nil end
   if active and active.started and active.source == buf then
     return { phase = active.phase, elapsed_ms = elapsed(active), running = active.running, code = active.code }
   end
@@ -174,6 +183,7 @@ local function finish_status(state, code)
   if state.timer then state.timer:stop(); state.timer:close(); state.timer = nil end
   local phase = code == 'cancelled' and 'cancelled' or (code and 'error' or 'done')
   if active == state then active = nil end
+  if session.get().request == state then session.get().request = nil end
   status(state, phase, false, code)
 end
 
@@ -201,64 +211,56 @@ local function failure_text(state, code, detail)
   return message .. ('（経過 %.1f秒）'):format(elapsed(state) / 1000)
 end
 
+local function outcome(state, message, result, edits)
+  if state.recorded then return end
+  state.recorded = true
+  session.append('assistant', message, { intent = state.intent, file = state.file,
+    request_id = state.id, status = result, outcome = result, edits = edits })
+end
+
 local function cancel(state, code)
   state.cancelled = true
-  finish_status(state, code or 'cancelled')
-  local close = state.prompt_close
-  state.prompt_close = nil
-  if close then close() end
+  outcome(state, failures[code or 'cancelled'] or failures.process_exit, code or 'cancelled')
   if state.process then state.process:kill(15) end
   prepare.clean_cwd(state)
+  finish_status(state, code or 'cancelled')
 end
 
 function M.stop()
-  if not active then return end
-  local state = active
-  cancel(state)
-  if state.buf and vim.api.nvim_buf_is_valid(state.buf) then
-    vim.bo[state.buf].modifiable = true
-    vim.api.nvim_buf_set_lines(state.buf, 0, -1, false, { failure_text(state, 'cancelled') })
-    vim.bo[state.buf].modifiable = false
-  end
+  if active then cancel(active) end
+end
+
+function M.shutdown()
+  shutting_down = true
+  if draft then local close = draft; draft = nil; close() end
+  M.stop()
+  snapshots, statuses, undo_eol = {}, {}, {}
+  session.reset()
+  shutting_down = false
 end
 
 local function launch(config, prompt, state, ctx)
   if state.cancelled or active ~= state then return end
-  if vim.api.nvim_get_current_buf() ~= ctx.buf or not ctx.valid() then
-    cancel(state); error_message('競合: 対象バッファまたはファイルが変更されました。再実行してください'); return
+  if not ctx.valid() then
+    cancel(state, 'conflict'); error_message('競合: 対象バッファまたはファイルが変更されました。再実行してください'); return
   end
-  local payload = vim.json.encode({ prompt = prompt, buffer = {
+  local payload = vim.json.encode({ prompt = prompt, session_id = session.get().id, request_id = state.id,
+    intent = state.intent, history = state.history, buffer = {
     path = ctx.path, content = ctx.content, modified = ctx.options.modified,
     filetype = ctx.options.filetype, cursor = ctx.cursor,
   } })
-  if #payload > config.max_agent_bytes then cancel(state); error_message('送信サイズ制限を超えています'); return end
+  if #payload > config.max_agent_bytes then cancel(state, 'size_limit'); error_message('送信サイズ制限を超えています'); return end
   state.cwd = prepare.tempdir()
-  if not state.cwd then cancel(state); error_message('専用作業ディレクトリを作成できません'); return end
-  local output_buf, output_win = ui.float({ '# エージェント', '', '実行中…' }, 'HodoCode エージェント')
-  state.buf, state.source, state.started = output_buf, ctx.buf, uv.hrtime()
-  if not statuses[ctx.buf] then
-    vim.api.nvim_create_autocmd('BufWipeout', { buffer = ctx.buf, once = true, callback = function() statuses[ctx.buf] = nil end })
-  end
-  local function closed()
-    if active == state then cancel(state) end
-  end
-  vim.api.nvim_create_autocmd('WinClosed', { pattern = tostring(output_win), once = true, callback = closed })
-  vim.api.nvim_create_autocmd('BufWipeout', { buffer = output_buf, once = true, callback = closed })
-  local function render(lines)
-    if vim.api.nvim_buf_is_valid(output_buf) then
-      vim.bo[output_buf].modifiable = true
-      vim.api.nvim_buf_set_lines(output_buf, 0, -1, false, lines)
-      vim.bo[output_buf].modifiable = false
-    end
-  end
-  local labels = { starting = '開始中', waiting = '応答待ち', received = '応答受信', validating = '変更を検証中' }
+  if not state.cwd then cancel(state, 'internal_error'); error_message('専用作業ディレクトリを作成できません'); return end
+  state.started = uv.hrtime()
   local function progress()
-    if state.running and not state.cancelled then
-      render({ '# エージェント', '', ('実行中… %s（経過 %.1f秒）'):format(labels[state.phase] or '応答待ち', elapsed(state) / 1000) })
+    if active == state and state.running and not state.cancelled then
+      status(state, state.phase, true)
     end
   end
   status(state, 'starting', true)
   if state.cancelled or active ~= state then return end
+  if not ctx.valid() then cancel(state, 'conflict'); return end
   state.timer = uv.new_timer()
   state.timer:start(1000, 1000, vim.schedule_wrap(progress))
   local parser = events.new(config.max_agent_bytes, function(phase)
@@ -289,7 +291,7 @@ local function launch(config, prompt, state, ctx)
     stdout = stream(true), stderr = stream(false),
   }, vim.schedule_wrap(function(result)
     prepare.clean_cwd(state)
-    if state.cancelled then return end
+    if state.cancelled or active ~= state then return end
     local response, parse_error = parser:finish()
     local code = state.failure
     if result.code == 124 or (result.signal and result.signal ~= 0 and elapsed(state) >= config.agent_timeout_ms) then code = 'timeout' end
@@ -298,14 +300,22 @@ local function launch(config, prompt, state, ctx)
     if not code then code = parse_error end
     local function fail(reason, detail)
       local message = failure_text(state, reason, detail)
+      outcome(state, message, reason)
       finish_status(state, reason)
-      render({ message }); error_message(message)
+      error_message(message)
     end
     if code then fail(code); return end
-    if not vim.api.nvim_win_is_valid(output_win) then finish_status(state, 'cancelled'); return end
     status(state, 'validating', true)
     if state.cancelled or active ~= state then return end
     if response.version ~= nil and response.version ~= vim.fn.sha256(ctx.content) then fail('version_mismatch'); return end
+    if state.intent == 'chat' then
+      if response.content ~= nil or (response.edits ~= nil and (not vim.islist(response.edits) or #response.edits > 0)) then
+        fail('invalid_patch', '質問への応答に変更が含まれています'); return
+      end
+      outcome(state, response.message, 'nochange')
+      finish_status(state)
+      return
+    end
     if response.edits ~= nil then
       local content, patch_error = require('hodocode.edit_patch').apply(ctx.content, response.edits, config.max_agent_bytes)
       if not content or patch_error then fail('invalid_patch', patch_error); return end
@@ -313,151 +323,112 @@ local function launch(config, prompt, state, ctx)
     end
     if not ctx.valid() then fail('conflict'); return end
     if response.content ~= nil and not supported(response.content) then fail('invalid_patch'); return end
-    local lines = vim.split(response.message, '\n', { plain = true })
     if response.content ~= nil then
       if not ctx.valid() then fail('conflict'); return end
       local replacement = logical(response.content)
       local changed = not vim.deep_equal(replacement.lines, vim.api.nvim_buf_get_lines(ctx.buf, 0, -1, false))
         or replacement.endofline ~= vim.bo[ctx.buf].endofline
       if changed then
+        local applied = false
         vim.api.nvim_buf_call(ctx.buf, function()
+          if state.cancelled or active ~= state or not ctx.valid() then return end
           -- Break the undo block without discarding the user's earlier unsaved edits.
           vim.cmd('let &l:undolevels = &l:undolevels')
+          if state.cancelled or active ~= state or not ctx.valid() then return end
           local before_seq, before_eol = vim.fn.undotree().seq_cur, vim.bo[ctx.buf].endofline
           vim.api.nvim_buf_set_lines(ctx.buf, 0, -1, false, replacement.lines)
           restoring_eol = true
           vim.bo[ctx.buf].endofline = replacement.endofline
           restoring_eol = false
           track_eol(ctx.buf, before_seq, before_eol, vim.fn.undotree().seq_cur, replacement.endofline)
+          applied = true
         end)
+        if not applied then
+          if not state.cancelled and active == state then fail('conflict') end
+          return
+        end
         if not snapshots[ctx.buf] then
           vim.api.nvim_create_autocmd('BufWipeout', { buffer = ctx.buf, once = true, callback = function() snapshots[ctx.buf] = nil end })
         end
         snapshots[ctx.buf] = ctx.saved
         require('hodocode.edit_marks').set(ctx.buf, ctx.content, text(ctx.buf))
+        outcome(state, response.message, 'applied', response.edits)
         finish_status(state)
-        local focused = vim.api.nvim_get_current_win() == output_win
-        if vim.api.nvim_win_is_valid(output_win) then vim.api.nvim_win_close(output_win, true) end
-        if focused and vim.api.nvim_win_is_valid(ctx.win) then vim.api.nvim_set_current_win(ctx.win) end
-        vim.cmd.redraw()
-        vim.notify('HodoCode: バッファを更新しました（未保存）。🤖が変更行です。dで差分を確認できます。')
+        require('hodocode.inline_diff').refresh(ctx.buf, M.baseline(ctx.buf))
         return
       end
     end
+    outcome(state, response.message, 'nochange')
     finish_status(state)
-    render(lines)
   end))
   if not ok then
     local message = failure_text(state, 'spawn_failed')
-    cancel(state, 'spawn_failed'); render({ message }); error_message(message); return
+    cancel(state, 'spawn_failed'); error_message(message); return
   end
   state.process = process
   if active == state and state.running and state.phase == 'starting' then status(state, 'waiting', true) end
   if state.failure or state.cancelled then process:kill(15) end
 end
 
-function M.run(config, prompt)
+local request_serial = 0
+function M.run(config, prompt, intent, target)
+  if shutting_down then return end
   if active then error_message('エージェントは実行中です。:HodoCodeCancelで中止できます'); return end
+  intent = intent or 'edit'
+  if intent ~= 'chat' and intent ~= 'edit' then error_message('不正な要求種別です'); return end
   if not prepare.argv(config.agent) then
     error_message('AI接続先が未設定です。setup({ agent = { 実行ファイル, 引数... } })でJSONアダプターを指定してください'); return
   end
-  local ctx, err = capture()
-  if not ctx then error_message(err); return end
-  local state = { cancelled = false, source = ctx.buf }
-  active = state
+  target = target or { buf = vim.api.nvim_get_current_buf(), win = vim.api.nvim_get_current_win(),
+    cursor = vim.api.nvim_win_get_cursor(0) }
+  local function send(value)
+    if active then error_message('エージェントは実行中です。:HodoCodeCancelで中止できます'); return end
+    local ctx, err = capture(target)
+    if not ctx then error_message(err); return end
+    require('hodocode.chat').open(config, target)
+    if active or shutting_down then return end
+    if not ctx.valid() then error_message(failures.conflict); return end
+    request_serial = request_serial + 1
+    local state = { cancelled = false, source = ctx.buf, intent = intent, started = uv.hrtime(),
+      id = session.get().id .. '-' .. request_serial, file = vim.fn.fnamemodify(ctx.path, ':t'),
+      history = session.history() }
+    active = state
+    session.get().request = state
+    session.append('user', value, { intent = intent, file = state.file, request_id = state.id, status = 'sent' })
+    session.changed()
+    launch(config, value, state, ctx)
+    return active == state
+  end
   if not prompt or prompt == '' then
+    if draft then return end
     local _, _, close = require('hodocode.edit_prompt').open(function(value)
-      if state.cancelled then return end
-      state.prompt_close = nil
-      launch(config, value, state, ctx)
-    end, function()
-      if not state.cancelled then cancel(state) end
-    end)
-    state.prompt_close = close
+      draft = nil
+      send(value)
+    end, function() draft = nil end)
+    draft = close
   else
-    launch(config, prompt, state, ctx)
+    return send(prompt)
   end
 end
 
-local function metadata(value)
-  return value.fileformat .. ', EOL=' .. tostring(value.endofline) .. ', BOM=' .. tostring(value.bomb)
+function M.baseline(buf)
+  buf = buf or vim.api.nvim_get_current_buf()
+  if not vim.api.nvim_buf_is_loaded(buf) then return nil, '対象バッファが読み込まれていません' end
+  local path = vim.api.nvim_buf_get_name(buf)
+  if path == '' or vim.bo[buf].buftype ~= '' then return nil, '通常の名前付きファイルバッファで実行してください' end
+  if not supported_buffer(buf) or not supported(text(buf)) then
+    return nil, 'UTF-8（任意のBOM）とunix/dos改行のみ対応しています'
+  end
+  local snapshot, err = snapshots[buf]
+  if snapshot and snapshot.path ~= path then snapshot = nil end
+  if not snapshot then snapshot, err = disk(path) end
+  if not snapshot then return nil, err end
+  return logical(snapshot.content)
 end
 
 function M.diff()
   local buf = vim.api.nvim_get_current_buf()
-  local path = vim.api.nvim_buf_get_name(buf)
-  if path == '' or vim.bo[buf].buftype ~= '' then error_message('通常の名前付きファイルバッファで実行してください'); return end
-  if not supported_buffer(buf) or not supported(text(buf)) then
-    error_message('UTF-8（任意のBOM）とunix/dos改行のみ対応しています'); return
-  end
-  local snapshot, err = snapshots[buf]
-  if snapshot and snapshot.path ~= path then snapshot = nil end
-  local request_baseline = snapshot ~= nil
-  if not snapshot then snapshot, err = disk(path) end
-  if not snapshot then error_message(err); return end
-  if views[buf] then views[buf]() end
-  local saved = logical(snapshot.content)
-  local before = vim.api.nvim_create_buf(false, true)
-  vim.api.nvim_buf_set_name(before, 'hodocode://saved/' .. before .. '/' .. path)
-  vim.api.nvim_buf_set_lines(before, 0, -1, false, saved.lines)
-  vim.bo[before].filetype = vim.bo[buf].filetype
-  vim.bo[before].endofline = saved.endofline
-  vim.bo[before].fileformat = saved.fileformat
-  vim.bo[before].bomb = saved.bomb
-  vim.bo[before].bufhidden = 'wipe'
-  vim.bo[before].modifiable = false
-  vim.bo[before].readonly = true
-  local original_winbar = vim.wo.winbar
-  vim.cmd('tab split')
-  local left = vim.api.nvim_get_current_win()
-  vim.api.nvim_win_set_buf(left, before)
-  vim.cmd.diffthis()
-  vim.cmd('rightbelow vsplit')
-  local right = vim.api.nvim_get_current_win()
-  vim.api.nvim_win_set_buf(right, buf)
-  vim.cmd.diffthis()
-  local function labels()
-    if vim.api.nvim_win_is_valid(left) then
-      local label = request_baseline and '保存済み（要求開始時）: ' or '保存済み（diff表示時）: '
-      vim.wo[left].winbar = (label .. path .. (snapshot.missing and ' (new file, empty)' or '') .. ' [' .. metadata(saved) .. ']'):gsub('%%', '%%%%')
-    end
-    if vim.api.nvim_win_is_valid(right) then
-      vim.wo[right].winbar = ('現在のバッファ: ' .. path .. ' [' .. metadata(options(buf)) .. ']'):gsub('%%', '%%%%')
-    end
-  end
-  labels()
-  local hooks, closing = {}, nil
-  local function clean_hooks()
-    for _, hook in ipairs(hooks) do pcall(vim.api.nvim_del_autocmd, hook) end
-    hooks = {}
-  end
-  local function close()
-    if closing then return end
-    closing = true
-    views[buf] = nil
-    clean_hooks()
-    for _, win in ipairs({ right, left }) do
-      if vim.api.nvim_win_is_valid(win) then
-        vim.api.nvim_win_call(win, function() vim.cmd('diffoff') end)
-        vim.wo[win].winbar = original_winbar
-        local only_dirty_view = win == right and vim.api.nvim_buf_is_valid(buf)
-          and vim.bo[buf].modified and #vim.fn.win_findbuf(buf) == 1
-        local expected = win == right and buf or before
-        if vim.api.nvim_win_get_buf(win) == expected and not only_dirty_view then
-          pcall(vim.api.nvim_win_close, win, true)
-        end
-      end
-    end
-    if vim.api.nvim_buf_is_valid(before) then pcall(vim.api.nvim_buf_delete, before, { force = true }) end
-  end
-  views[buf] = close
-  vim.keymap.set('n', 'q', close, { buffer = before, nowait = true })
-  hooks[#hooks + 1] = vim.api.nvim_create_autocmd({ 'TextChanged', 'TextChangedI', 'BufWritePost', 'OptionSet' }, { callback = function()
-    if vim.api.nvim_buf_is_valid(buf) then labels() end
-  end })
-  hooks[#hooks + 1] = vim.api.nvim_create_autocmd('WinClosed', { pattern = tostring(right), once = true, callback = function() clean_hooks(); vim.schedule(close) end })
-  hooks[#hooks + 1] = vim.api.nvim_create_autocmd('BufWipeout', { buffer = before, once = true, callback = function() clean_hooks(); vim.schedule(close) end })
-  hooks[#hooks + 1] = vim.api.nvim_create_autocmd({ 'BufWipeout', 'BufFilePost' }, { buffer = buf, once = true, callback = function() clean_hooks(); vim.schedule(close) end })
+  return require('hodocode.inline_diff').toggle(buf, function() return M.baseline(buf) end)
 end
 
 return M

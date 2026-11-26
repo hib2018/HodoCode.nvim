@@ -24,7 +24,14 @@ local function run()
   end
   local events = { 'VimResized', 'WinClosed', 'BufWipeout', 'TextChanged', 'TextChangedI',
     'BufWritePost', 'BufReadPost', 'BufDelete', 'CursorMoved' }
-  local function watches() return #vim.api.nvim_get_autocmds({ event = events }) end
+  local function watches()
+    local count = 0
+    for _, watch in ipairs(vim.api.nvim_get_autocmds({ event = events })) do
+      -- A hidden persistent history buffer retains exactly its own wipe watcher.
+      if not (watch.group_name == 'HodoCodeConversation' and watch.event == 'BufWipeout') then count = count + 1 end
+    end
+    return count
+  end
   project = vim.fn.tempname()
   vim.fn.mkdir(project, 'p')
   project = uv.fs_realpath(project)
@@ -67,32 +74,11 @@ local function run()
   size(native, 'collapsed native tree')
 
   vim.api.nvim_set_current_win(source_win)
-  assert(vim.fn.executable(plugin .. '/bin/hodocode') == 1, 'run make build before this test')
-  local config = { root = project, backend = { plugin .. '/bin/hodocode' }, excludes = {},
-    timeout_ms = 5000, max_agent_bytes = 131072,
-    chat = { 'python3', '-c', [[import json,os,stat,sys,time
-p=sys.argv[1]
-r=json.load(open(p))
-assert 'SECRET' not in json.dumps(r)
-assert r['buffer']['file']=='unsaved.py'
-assert stat.S_IMODE(os.stat(p).st_mode)==0o600
-assert stat.S_IMODE(os.stat(os.path.dirname(p)).st_mode)==0o700
-assert os.path.realpath(os.getcwd())==os.path.realpath(os.path.dirname(p))
-print('PRIVATE_CONTEXT='+p,flush=True)
-time.sleep(30)
-]], '{context}' } }
+  local config = { agent = { 'python3', '-c', [[import json,sys; json.load(sys.stdin); print('{"message":"local"}')]] } }
   assert(chat.open(config))
-  wait(function() return vim.bo.buftype == 'terminal' end, 'local chat launch')
-  local terminal, chat_win = vim.api.nvim_get_current_buf(), vim.api.nvim_get_current_win()
-  local private_file
-  wait(function()
-    private_file = table.concat(vim.api.nvim_buf_get_lines(terminal, 0, -1, false), '\n'):match('PRIVATE_CONTEXT=([^\r\n]+)')
-    return private_file ~= nil
-  end, 'local adapter validated masked private context')
-  local private_dir = vim.fs.dirname(private_file)
-  assert(uv.fs_stat(private_file), 'chat context missing')
+  local history_buf, chat_win = vim.api.nvim_get_current_buf(), vim.api.nvim_get_current_win()
+  assert(vim.bo[history_buf].buftype == 'nofile', 'chat must be native, not terminal')
   size(chat_win, 'chat')
-  vim.cmd.stopinsert()
 
   for _, screen in ipairs({ { 100, 32 }, { 160, 50 } }) do
     vim.o.columns, vim.o.lines = screen[1], screen[2]
@@ -105,11 +91,12 @@ time.sleep(30)
       return true
     end, 'all popup renderers follow resize')
     for label, win in pairs({ short = short, long = long, native = native, chat = chat_win }) do size(win, label .. ' resized') end
-    assert(uv.fs_stat(private_file), 'resizing deleted frozen chat context')
+    assert(vim.api.nvim_buf_is_valid(history_buf), 'resizing deleted persistent history')
   end
-  vim.api.nvim_win_close(chat_win, true)
-  wait(function() return not uv.fs_stat(private_dir) and not vim.api.nvim_buf_is_valid(terminal) end, 'closing chat cleans private context')
-  assert(not chat.stop(), 'closing terminal left active chat')
+  chat.hide()
+  assert(vim.api.nvim_buf_is_valid(history_buf), 'hide must retain history buffer')
+  assert(#vim.api.nvim_get_autocmds({ buffer = history_buf, event = 'BufWipeout' }) == 1, 'persistent history watcher leaked')
+  assert(not require('hodocode.session').get().request, 'opening chat must not launch an adapter')
   controller:close()
   vim.api.nvim_win_close(short, true)
   vim.api.nvim_win_close(long, true)
@@ -140,9 +127,9 @@ time.sleep(30)
     'popup lifecycle changed source')
   assert(not uv.fs_stat(project .. '/unsaved.py'), 'popup lifecycle wrote unsaved source')
   tree.clear()
-  print('PASS: unified short/long/native/chat popup sizes, expansion/collapse, resize, tiny screens, context and autocmd cleanup; real prepare-buffer + local chat only, no AI/network')
+  print('PASS: unified short/long/native/chat popup sizes, expansion/collapse, resize, tiny screens, context and autocmd cleanup; native persistent chat only, no AI/network')
 end
 local ok, err = xpcall(run, debug.traceback)
-if package.loaded['hodocode.chat'] then pcall(require('hodocode.chat').stop) end
+if package.loaded['hodocode.chat'] then pcall(require('hodocode.chat').shutdown) end
 if project then vim.fn.delete(project, 'rf') end
 if not ok then io.stderr:write(err .. '\n'); vim.cmd('cquit 1') else vim.cmd('qa!') end

@@ -10,7 +10,7 @@ local function run()
   vim.api.nvim_buf_set_lines(source, 0, -1, false, { 'package main', '// private comment', 'func main() { println("secret") }' })
   hc.setup({ root = root,
     explain_agent = { 'python3', plugin .. '/examples/explain-demo.py' },
-    chat = { 'python3', plugin .. '/examples/chat-demo.py', '{context}' },
+    agent = { 'python3', plugin .. '/examples/chat-demo.py' },
   })
   local notices = {}
   vim.notify = function(message) notices[#notices + 1] = message end
@@ -32,22 +32,24 @@ local function run()
   assert(table.concat(vim.api.nvim_buf_get_lines(0, 0, -1, false)):find('AIへは送信していません', 1, true))
   vim.api.nvim_win_close(0, true)
   hc.chat()
-  wait(function() return vim.bo.buftype == 'terminal' end, 'demo chat terminal')
-  local terminal = vim.api.nvim_get_current_buf()
-  wait(function()
-    return table.concat(vim.api.nvim_buf_get_lines(terminal, 0, -1, false)):find('AI未接続', 1, true) ~= nil
-  end, 'demo terminal UI')
-  assert(not table.concat(vim.api.nvim_buf_get_lines(terminal, 0, -1, false)):find('secret', 1, true))
-  vim.fn.chansend(vim.b[terminal].terminal_job_id, '/quit\n')
-  wait(function() return not vim.api.nvim_buf_is_valid(terminal) end, 'demo terminal exit cleanup')
-  assert(vim.api.nvim_get_current_buf() == source)
+  local history_buf = vim.api.nvim_get_current_buf()
+  assert(vim.bo[history_buf].buftype == 'nofile', 'demo chat must use native UI')
+  require('hodocode.agent').run(hc.config, 'local demo', 'chat', { buf = source })
+  wait(function() return not require('hodocode.session').get().request end, 'demo chat reply')
+  assert(table.concat(vim.api.nvim_buf_get_lines(history_buf, 0, -1, false)):find('AI未接続', 1, true))
+  assert(not table.concat(vim.api.nvim_buf_get_lines(history_buf, 0, -1, false)):find('secret', 1, true))
+  require('hodocode.chat').hide()
+  hc.chat()
+  assert(table.concat(vim.api.nvim_buf_get_lines(0, 0, -1, false)):find('local demo', 1, true), 'demo history lost')
+  require('hodocode.chat').hide()
+  vim.api.nvim_set_current_buf(source)
   vim.cmd.stopinsert()
   hc.setup({ root = root })
   assert(#marks() == 0, 'setup must clear previous annotations')
   hc.cancel()
   vim.api.nvim_buf_delete(source, { force = true })
   vim.fn.delete(root, 'rf')
-  print('PASS: bundled local demos + real prepare-buffer, annotations/popup and terminal lifecycle; no AI/network')
+  print('PASS: bundled local demos + real prepare-buffer, annotations/popup and persistent session lifecycle; no AI/network')
 end
 local ok, err = xpcall(run, debug.traceback)
 if not ok then io.stderr:write(err .. '\n'); vim.cmd('cquit 1') else vim.cmd('qa!') end

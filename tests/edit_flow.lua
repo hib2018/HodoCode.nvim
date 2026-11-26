@@ -31,7 +31,7 @@ json.dump({'message':'done','content':'one\nnew\nend\n#user\n'},sys.stdout)]] } 
   vim.api.nvim_buf_set_lines(prompt, 0, -1, false, { 'change it' })
   vim.cmd.stopinsert()
   invoke('<C-s>')
-  assert(vim.wait(5000, function() return vim.api.nvim_buf_get_lines(source, 1, 2, false)[1] == 'new' and vim.api.nvim_get_current_win() == source_win end, 5), table.concat(notices, '\n'))
+  assert(vim.wait(5000, function() return vim.api.nvim_buf_get_lines(source, 1, 2, false)[1] == 'new'  end, 5), table.concat(notices, '\n'))
   assert(#vim.api.nvim_list_tabpages() == tabs, 'edit must not open diff')
   assert(require('hodocode.mode').active(), 'source d mapping must remain available')
   assert(vim.bo[source].modified and vim.deep_equal(vim.fn.readfile(root .. '/main.py'), original))
@@ -41,22 +41,21 @@ json.dump({'message':'done','content':'one\nnew\nend\n#user\n'},sys.stdout)]] } 
   assert(marks[1][4].virt_text[1][1]:find('🤖', 1, true))
   vim.api.nvim_exec_autocmds('TextChanged', { buffer = source })
   assert(#vim.api.nvim_buf_get_extmarks(source, ns, 0, -1, {}) == 1, 'own edit event must preserve marks')
+  assert(vim.api.nvim_get_current_win() ~= source_win, 'success must preserve prompt/chat focus')
+  require('hodocode.chat').hide()
+  vim.api.nvim_set_current_win(source_win)
   invoke('d')
-  assert(#vim.api.nvim_list_tabpages() == tabs + 1)
-  local left
-  for _, win in ipairs(vim.api.nvim_tabpage_list_wins(0)) do
-    local buf = vim.api.nvim_win_get_buf(win)
-    if buf ~= source then left = buf end
-  end
-  assert(left and not vim.bo[left].modifiable)
-  assert(vim.deep_equal(vim.api.nvim_buf_get_lines(left, 0, -1, false), original))
-  vim.cmd.tabclose()
+  assert(#vim.api.nvim_list_tabpages() == tabs)
+  assert(require('hodocode.inline_diff').visible(source))
+  assert(vim.deep_equal(require('hodocode.agent').baseline(source).lines, original))
+  invoke('d')
+  assert(not require('hodocode.inline_diff').visible(source))
   vim.api.nvim_buf_set_lines(source, -1, -1, false, { '#manual' })
   vim.api.nvim_exec_autocmds('TextChanged', { buffer = source })
   assert(#vim.api.nvim_buf_get_extmarks(source, ns, 0, -1, {}) == 0, 'later user edits must clear stale markers')
   hc.cancel()
   vim.fn.delete(root, 'rf')
-  print('PASS: A popup request -> buffer redraw/focus + AI-only robot markers -> explicit d saved diff; no auto diff/save/reanalysis/network')
+  print('PASS: A popup request -> buffer redraw/persistent chat + AI-only robot markers -> explicit d inline saved diff; no auto diff/save/reanalysis/network')
 end
 local ok, err = xpcall(run, debug.traceback)
 if not ok then io.stderr:write(err .. '\n'); vim.cmd('cquit 1') else vim.cmd('qa!') end

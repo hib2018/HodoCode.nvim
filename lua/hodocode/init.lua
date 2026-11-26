@@ -298,7 +298,9 @@ function M.reload()
 end
 
 function M.agent(prompt)
-  require('hodocode.agent').run(M.config, prompt)
+  local chat = package.loaded['hodocode.chat']
+  local target = chat and chat.is_view and chat.is_view(vim.api.nvim_get_current_buf()) and chat.source() or nil
+  require('hodocode.agent').run(M.config, prompt, 'edit', target)
 end
 
 function M.diff()
@@ -333,7 +335,6 @@ function M.cancel()
   stop_translation()
   require('hodocode.agent').stop()
   require('hodocode.explain').stop()
-  require('hodocode.chat').stop()
 end
 
 function M.next_call()
@@ -380,7 +381,8 @@ function M.setup(options)
   require('hodocode.mode').stop()
   require('hodocode.tree').clear()
   require('hodocode.client').stop_all()
-  M.cancel()
+  stop_translation()
+  require('hodocode.explain').stop()
   require('hodocode.explain').clear()
   M.config = vim.tbl_deep_extend('force', vim.deepcopy(defaults), options or {})
   assert(type(M.config.backend) == 'table' and #M.config.backend > 0, 'backend must be an argv list')
@@ -397,6 +399,8 @@ function M.setup(options)
   assert(M.config.graph_renderer == nil or type(M.config.graph_renderer) == 'function', 'graph_renderer must be a function')
   assert(type(M.config.excludes) == 'table', 'excludes must be a list')
   for _, pattern in ipairs(M.config.excludes) do assert(type(pattern) == 'string', 'excludes must contain strings') end
+  local chat = package.loaded['hodocode.chat']
+  if chat and chat.configure then chat.configure(M.config) end
   local group = vim.api.nvim_create_augroup('HodoCode', { clear = true })
   vim.api.nvim_create_autocmd('BufWritePost', { group = group, nested = true, callback = function()
     require('hodocode.tree').clear()
@@ -415,7 +419,11 @@ function M.setup(options)
   end })
   vim.api.nvim_create_autocmd('VimLeavePre', { group = group, callback = function()
     require('hodocode.client').stop_all()
-    M.cancel()
+    stop_translation()
+    require('hodocode.explain').stop()
+    require('hodocode.chat').shutdown()
+    require('hodocode.agent').shutdown()
+    require('hodocode.inline_diff').shutdown()
   end })
 end
 

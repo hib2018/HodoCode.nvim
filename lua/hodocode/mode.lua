@@ -3,12 +3,12 @@ local state
 local actions = {
   n = { 'next_call', '現在の関数内の次の呼び出し名へ' }, N = { 'previous_call', '現在の関数内の前の呼び出し名へ' },
   b = { 'back', '直前の読解位置へ戻る' }, g = { 'function_start', '関数先頭' }, G = { 'function_end', '関数末尾' },
-  t = { 'calls', 'ツリー' }, e = { 'chat', 'CLIチャットを開く' }, i = { 'chat', 'CLIチャットを開く（eと同じ）' },
+  t = { 'calls', 'ツリー' }, e = { 'chat', '同じエージェント会話を開く・再表示' }, i = { 'chat', '同じエージェント会話を開く（eと同じ）' },
   E = { 'explain_now', '現在の関数のAI行解説を生成' }, c = { 'notes_toggle', '行解説表示切替' },
   ['['] = { 'help_up', 'ポップアップを上へスクロール' }, [']'] = { 'help_down', 'ポップアップを下へスクロール' },
   v = { 'exit_mode', '編集へ戻る' },
   f = { 'functions', '関数一覧' }, s = { 'syntax', '構文・関数・変数情報' }, r = { 'reload', '再解析' },
-  a = { 'explain_line', 'カーソル行を解説（指示可・空欄で通常解説）' }, A = { 'agent', 'AIでバッファを編集（指示入力）' }, x = { 'cancel', 'AI中止' }, d = { 'diff', '保存済み内容との差分' },
+  a = { 'explain_line', 'カーソル行を解説（指示可・空欄で通常解説）' }, A = { 'agent', 'AIでバッファを編集（指示入力）' }, x = { 'cancel', 'AI中止' }, d = { 'diff', '保存済み基準の行直下diffをオン・オフ' },
   ['<CR>'] = { 'follow', '呼び出し先' }, m = { 'graph', '図' },
   z = { 'notes_clear', '注釈消去' }, K = { 'notes_show', '注釈全文' },
   ['?'] = { 'help', '操作一覧' },
@@ -62,7 +62,9 @@ function M.help()
     '読解: :write → n/N → Enter → b。s は構文・変数情報、m は図。',
     '未保存でも編集・E/a の解説・A のAI編集・d の差分を利用できます。',
     '解析・移動・図は保存済みソース用です。必要なら :write してください。自動保存しません。',
-    'AI: A で指示 → d で変更確認、x で中止。E は関数全体、a はカーソル行。',
+    '会話: e/i → Enterで質問。Aは同じ会話への編集指示。Eは関数全体、aはカーソル行の解説。',
+    '編集: A → 🤖 → dで行直下diffを切替 → uでundo／:writeで保存。旧行は実際の行の下に表示。',
+    'Esc・画面を閉じる・モード終了でも依頼と履歴は継続。xだけが実行中止（履歴は保持）。',
   }
   for _, section in ipairs(sections) do
     lines[#lines + 1], lines[#lines + 2] = '', '## ' .. section[1]
@@ -143,17 +145,20 @@ local function guide(current)
   end
   local config = require('hodocode').config
   local agent = require('hodocode.agent')
-  local status = agent.status and agent.status(current.buf)
+  local conversation = require('hodocode.session').get()
+  local request = conversation.request
+  local status = agent.status and agent.status(request and request.source or current.buf)
+  if request and not status then status = conversation.last_status end
   local file = vim.bo[current.buf].modified and '未保存 :writeで解析' or '保存済み'
   local configured = type(config.agent) == 'table' and type(config.agent[1]) == 'string' and config.agent[1] ~= ''
   local phase = status and (phases[status.phase] or status.phase) or (configured and '待機' or '未設定')
   if width >= 56 then
-    local text = file .. ' | 編集AI: ' .. phase
+    local text = file .. ' | エージェント: ' .. phase
     local detail = status and status.phase == 'done' and ' d:差分' or ''
     if vim.fn.strdisplaywidth(text .. detail) <= width then text = text .. detail end
     lines[#lines + 1] = text .. ' | :HodoCode 操作選択'
   elseif width >= 24 then
-    lines[#lines + 1] = (vim.bo[current.buf].modified and '未保存' or '保存済み') .. ' | 編集:' .. phase
+    lines[#lines + 1] = (vim.bo[current.buf].modified and '未保存' or '保存済み') .. ' | AI:' .. phase
   end
   local height = math.max(1, math.min(#lines, vim.o.lines - vim.o.cmdheight - 3))
   if height == 1 then lines = { width >= 8 and '?:help q' or 'q ?' }

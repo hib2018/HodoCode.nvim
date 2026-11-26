@@ -2,6 +2,7 @@ local function run()
   vim.opt.runtimepath:prepend(vim.fn.getcwd())
   vim.o.hidden = true
   local agent, uv = require('hodocode.agent'), vim.uv or vim.loop
+  local chat, session = require('hodocode.chat'), require('hodocode.session')
   local root, notices = vim.fn.tempname(), {}
   vim.fn.mkdir(root, 'p')
   vim.notify = function(message) notices[#notices + 1] = message end
@@ -61,6 +62,7 @@ else:
     local cfg, trace = config(mode, expected, output)
     if limit then cfg.max_agent_bytes = limit end
     agent.run(cfg, 'edit')
+    chat.open(cfg)
     local popup, win = vim.api.nvim_get_current_buf(), vim.api.nvim_get_current_win()
     assert(popup ~= buf, 'request output must be a popup')
     wait(function() return uv.fs_stat(trace) ~= nil end, 'adapter stdin')
@@ -70,41 +72,34 @@ else:
   end
   local function finish(request)
     wait(function()
-      return not vim.api.nvim_buf_is_valid(request.buf) or not lines(request.buf):find('実行中…', 1, true)
+      return not session.get().request
     end, 'adapter completion')
     wait(function() return not uv.fs_stat(request.cwd) end, 'request cwd cleanup')
   end
   local function close(request)
-    if vim.api.nvim_win_is_valid(request.win) then
-      vim.api.nvim_set_current_win(request.win); key(request.buf, 'q')
-    else
-      vim.api.nvim_set_current_buf(request.source)
-    end
+    chat.hide()
+    vim.api.nvim_set_current_buf(request.source)
   end
-  local function baseline(buf, expected, current_disk)
+  local function baseline(buf, expected)
     vim.api.nvim_set_current_buf(buf)
-    local original_tab = vim.api.nvim_get_current_tabpage()
+    local before_tabs, before_wins = #vim.api.nvim_list_tabpages(), #vim.api.nvim_list_wins()
     local old_q = vim.fn.maparg('q', 'n', false, true)
+    local saved = assert(agent.baseline(buf))
+    assert(table.concat(saved.lines, '\n') == expected, 'wrong saved baseline: ' .. vim.inspect(saved))
     agent.diff()
-    local tab, left, right = vim.api.nvim_get_current_tabpage()
-    assert(tab ~= original_tab and #vim.api.nvim_tabpage_list_wins(tab) == 2, 'diff must own a two-pane tab')
-    for _, win in ipairs(vim.api.nvim_tabpage_list_wins(tab)) do
-      if vim.api.nvim_win_get_buf(win) == buf then right = win else left = win end
-    end
-    assert(left and right and vim.wo[left].diff and vim.wo[right].diff)
-    local saved = vim.api.nvim_win_get_buf(left)
-    assert(lines(saved) == expected, 'wrong saved baseline: ' .. lines(saved))
-    assert(not vim.bo[saved].modifiable and vim.bo[saved].readonly)
-    assert(vim.bo[buf].modifiable and vim.api.nvim_get_current_win() == right, 'right pane must be the live source')
-    local label = current_disk and '保存済み（diff表示時）' or '保存済み（要求開始時）'
-    assert(vim.wo[left].winbar:find(label, 1, true)
-      and vim.wo[right].winbar:find('現在のバッファ', 1, true), 'diff labels missing')
-    assert(vim.deep_equal(old_q, vim.fn.maparg('q', 'n', false, true)), 'diff must not override source q')
-    return { tab = tab, left = left, right = right, saved = saved }
+    assert(require('hodocode.inline_diff').visible(buf), 'inline diff not enabled')
+    assert(#vim.api.nvim_list_tabpages() == before_tabs and #vim.api.nvim_list_wins() == before_wins,
+      'inline diff must not open windows or tabs')
+    assert(vim.bo[buf].modifiable and vim.deep_equal(old_q, vim.fn.maparg('q', 'n', false, true)),
+      'inline diff changed source options or mappings')
+    return { source = buf, saved = saved }
   end
   local function close_diff(view)
-    vim.api.nvim_set_current_win(view.left); key(view.saved, 'q')
-    wait(function() return not vim.api.nvim_tabpage_is_valid(view.tab) end, 'scratch q closes owned tab')
+    vim.api.nvim_set_current_buf(view.source)
+    agent.diff()
+    assert(not require('hodocode.inline_diff').visible(view.source), 'inline diff did not toggle off')
+    assert(#vim.api.nvim_buf_get_extmarks(view.source, vim.api.nvim_create_namespace('HodoCodeInlineDiff'), 0, -1, {}) == 0,
+      'inline diff toggle left namespace marks')
   end
 
   local source, path = file('saved\n')
@@ -117,10 +112,12 @@ else:
   assert(lines(source) == 'saved\ndirty' and vim.bo[source].modified, 'one undo must preserve pre-AI dirty edits')
   vim.api.nvim_buf_call(source, function() vim.cmd.redo() end)
   local view = baseline(source, 'saved')
+  assert(#vim.api.nvim_buf_get_extmarks(source, vim.api.nvim_create_namespace('HodoCodeInlineDiff'), 0, -1, {}) > 0,
+    'inline diff must decorate changed source lines')
   vim.api.nvim_buf_set_lines(source, -1, -1, false, { 'live' })
-  assert(vim.api.nvim_win_get_buf(view.right) == source and lines(source):find('live', 1, true))
+  assert(lines(source):find('live', 1, true))
   vim.cmd.write()
-  assert(lines(view.saved) == 'saved', 'writing must not mutate request-time baseline')
+  assert(table.concat(agent.baseline(source).lines, '\n') == 'saved', 'writing must not mutate request-time baseline')
   close_diff(view)
   for _, mode in ipairs({ 'message', 'edit' }) do
     request = start(source, mode, 'saved\ndirty\nAI\nlive\n', 'saved\ndirty\nAI\nlive\n')
@@ -133,30 +130,13 @@ else:
   request = start(source, 'edit', 'saved\ndirty\nAI\nlive\n', 'second\n')
   finish(request); close(request)
   view = baseline(source, 'saved\ndirty\nAI\nlive')
-  vim.cmd.tabclose()
-  wait(function() return not vim.api.nvim_buf_is_valid(view.saved) end, 'right tabclose cleanup')
-
+  close_diff(view)
   local function source_watchers()
-    return #vim.api.nvim_get_autocmds({ buffer = source, event = { 'BufFilePost', 'BufWipeout' } })
+    return #vim.api.nvim_get_autocmds({ buffer = source })
   end
   local watchers = source_watchers()
   for _ = 1, 3 do close_diff(baseline(source, 'saved\ndirty\nAI\nlive')) end
-  assert(source_watchers() == watchers, 'diff open/close leaked source autocmds')
-  view = baseline(source, 'saved\ndirty\nAI\nlive')
-  assert(#vim.fn.win_findbuf(source) >= 2, 'original source must remain visible outside diff')
-  local replacement = vim.api.nvim_create_buf(true, false)
-  vim.api.nvim_buf_set_name(replacement, root .. '/unrelated.txt')
-  vim.api.nvim_buf_set_lines(replacement, 0, -1, false, { 'unrelated unsaved edits' })
-  vim.api.nvim_win_set_buf(view.right, replacement)
-  vim.api.nvim_set_current_win(view.left); key(view.saved, 'q')
-  wait(function() return not vim.api.nvim_buf_is_valid(view.saved) end, 'replaced diff scratch cleanup')
-  assert(vim.api.nvim_win_is_valid(view.right) and vim.api.nvim_win_get_buf(view.right) == replacement,
-    'scratch q closed or replaced an unrelated right window')
-  assert(lines(replacement) == 'unrelated unsaved edits' and vim.bo[replacement].modified,
-    'scratch q discarded unrelated dirty buffer')
-  assert(source_watchers() == watchers, 'replaced diff view leaked source autocmds')
-  vim.api.nvim_set_current_win(view.right); vim.cmd.tabclose()
-  vim.api.nvim_set_current_buf(source)
+  assert(source_watchers() == watchers, 'inline diff toggles leaked source autocmds')
 
   -- A renamed buffer must not inherit another path's AI baseline.
   local renamed = file('old disk\n')
@@ -170,7 +150,7 @@ else:
   local plain = file('disk without EOF')
   vim.api.nvim_buf_set_lines(plain, 0, -1, false, { 'unsaved' })
   view = baseline(plain, 'disk without EOF', true)
-  assert(not vim.bo[view.saved].endofline and vim.wo[view.left].winbar:find('EOL=false', 1, true))
+  assert(not view.saved.endofline, 'baseline lost missing EOF newline')
   close_diff(view)
   local new = file(nil)
   vim.api.nvim_buf_set_lines(new, 0, -1, false, { 'new unsaved' })
@@ -189,8 +169,7 @@ else:
   assert(lines(dos) == 'changed\nlast', 'redo must restore AI lines immediately')
   wait(function() return vim.bo[dos].endofline end, 'redo restores AI EOF newline')
   view = baseline(dos, 'saved\nlast')
-  assert(vim.bo[view.saved].bomb and vim.bo[view.saved].fileformat == 'dos' and not vim.bo[view.saved].endofline)
-  assert(vim.wo[view.left].winbar:find('BOM=true', 1, true) and vim.wo[view.left].winbar:find('dos', 1, true))
+  assert(view.saved.bomb and view.saved.fileformat == 'dos' and not view.saved.endofline)
   close_diff(view)
 
   local manual = file('manual saved\n')
@@ -208,7 +187,7 @@ else:
   end
 
   -- Each concurrent mutation must refuse application, retaining the source.
-  for _, kind in ipairs({ 'buffer', 'disk', 'name', 'options', 'window' }) do
+  for _, kind in ipairs({ 'buffer', 'disk', 'name', 'options' }) do
     local buf, filename = file('safe\n')
     request = start(buf, 'slow', 'safe\n', 'UNSAFE\n')
     if kind == 'buffer' then vim.api.nvim_buf_set_lines(buf, -1, -1, false, { 'user' })
@@ -220,33 +199,35 @@ else:
     assert(not lines(buf):find('UNSAFE', 1, true), 'hidden/conflicting apply: ' .. kind)
     close(request)
   end
-  -- Capture must precede waiting for an interactive prompt.
+  -- Source changes while composing are captured only when the user sends.
   local prompt = require('hodocode.edit_prompt')
   local open = prompt.open
-  for _, kind in ipairs({ 'buffer', 'disk', 'options', 'window' }) do
-    local buf, filename = file('prompt\n')
-    local callback
-    prompt.open = function(submit) callback = submit; return nil, nil, function() end end
-    local cfg, trace = config('edit', 'prompt\n', 'UNSAFE\n')
-    agent.run(cfg)
-    assert(callback, 'prompt not requested')
-    if kind == 'buffer' then vim.api.nvim_buf_set_lines(buf, -1, -1, false, { 'user' })
-    elseif kind == 'disk' then write(filename, 'external\n')
-    elseif kind == 'options' then vim.bo[buf].bomb = true
-    else vim.cmd.enew() end
-    local current = vim.api.nvim_get_current_buf()
-    callback('edit')
-    assert(not uv.fs_stat(trace) and not lines(buf):find('UNSAFE', 1, true), 'prompt capture race: ' .. kind)
-    assert(vim.api.nvim_get_current_buf() == current, 'rejected prompt changed buffers: ' .. kind)
-  end
+  local buf = file('prompt\n')
+  local callback
+  prompt.open = function(submit) callback = submit; return nil, nil, function() end end
+  local cfg = config('edit', 'prompt\nlatest\n', 'captured latest\n')
+  agent.run(cfg)
+  assert(callback, 'prompt not requested')
+  vim.api.nvim_buf_set_lines(buf, -1, -1, false, { 'latest' })
+  callback('edit')
+  wait(function() return agent.status(buf) and not agent.status(buf).running end, 'latest prompt snapshot')
+  assert(lines(buf) == 'captured latest', 'prompt send did not capture latest source')
   prompt.open = open
-  for _, cancel in ipairs({ 'q', 'stop' }) do
-    local buf = file('cancel\n')
+  chat.hide()
+  for _, action in ipairs({ 'hide', 'focus', 'window', 'stop' }) do
+    buf = file('cancel\n')
     request = start(buf, 'slow', 'cancel\n', 'LATE\n')
-    if cancel == 'q' then close(request) else agent.stop(); close(request) end
-    wait(function() return not uv.fs_stat(request.cwd) end, 'cancel cwd cleanup')
-    vim.wait(400, function() return false end, 10)
-    assert(lines(buf) == 'cancel', 'cancelled callback applied late')
+    local history_count = #session.get().history
+    if action == 'hide' then close(request)
+    elseif action == 'focus' then vim.api.nvim_set_current_win(vim.fn.win_findbuf(buf)[1])
+    elseif action == 'window' then
+      local source_win = vim.fn.win_findbuf(buf)[1]
+      vim.api.nvim_win_set_buf(source_win, vim.api.nvim_create_buf(true, false))
+    else agent.stop() end
+    finish(request)
+    assert(lines(buf) == (action == 'stop' and 'cancel' or 'LATE'), 'UI lifecycle cancelled request: ' .. action)
+    assert(#session.get().history >= history_count, 'history discarded: ' .. action)
+    close(request)
   end
   local malformed = file('safe\n')
   request = start(malformed, 'bad', 'safe\n')
@@ -254,7 +235,7 @@ else:
   assert(lines(request.buf):find('不正', 1, true) and lines(malformed) == 'safe')
   assert(not (lines(request.buf) .. table.concat(notices, '\n')):find('PRIVATE_STDERR_SECRET', 1, true), 'raw stderr leaked')
   close(request)
-  request = start(malformed, 'edit', 'safe\n', string.rep('x', 4096), 512)
+  request = start(malformed, 'edit', 'safe\n', string.rep('x', 65536), 32768)
   finish(request)
   assert(lines(malformed) == 'safe' and lines(request.buf):find('サイズ', 1, true), 'oversized response applied')
   close(request)
@@ -269,7 +250,7 @@ else:
   agent.run(cfg, 'edit')
   assert(not uv.fs_stat(trace) and lines(malformed) == 'safe', 'unsupported encoding must reject before launch')
   agent.stop(); vim.fn.delete(root, 'rf')
-  print('PASS: saved/request snapshots, live diff, undo, metadata, conflicts, prompt capture, cancel, private adapters')
+  print('PASS: saved/request snapshots, inline diff, undo, metadata, conflicts, send-time capture, hide versus cancel, private adapters')
 end
 local ok, err = xpcall(run, debug.traceback)
 if not ok then io.stderr:write(err .. '\n'); vim.cmd('cquit 1') else vim.cmd('qa!') end

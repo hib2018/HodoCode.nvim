@@ -78,29 +78,24 @@ json.dump({'message':'done','content':r['buffer']['content']+'// agent\n'},sys.s
   wait(function() return table.concat(vim.api.nvim_buf_get_lines(source, 0, -1, false), '\n'):find('// agent', 1, true) ~= nil end, 'agent edit')
   assert(vim.bo[source].modified, 'agent must not silently save')
   assert(not table.concat(vim.fn.readfile(root .. '/main.go'), '\n'):find('// agent', 1, true))
-  if vim.bo.buftype == 'nofile' then vim.api.nvim_win_close(0, true) end
-  assert(vim.api.nvim_get_current_buf() == source, 'successful edit must return to source')
+  require('hodocode.chat').hide()
+  vim.api.nvim_set_current_buf(source)
   hc.diff()
-  assert(#vim.api.nvim_tabpage_list_wins(0) == 2 and vim.wo.diff, 'diff tab')
-  local found_before = false
-  for _, win in ipairs(vim.api.nvim_tabpage_list_wins(0)) do
-    local buf = vim.api.nvim_win_get_buf(win)
-    if buf ~= source then
-      found_before = table.concat(vim.api.nvim_buf_get_lines(buf, 0, -1, false), '\n') .. '\n' == expectedSaved
-    end
-  end
-  assert(found_before, 'diff baseline must be saved disk content, not HEAD or preexisting unsaved edits')
-  vim.cmd.tabclose()
-  vim.api.nvim_win_set_buf(0, source)
+  assert(require('hodocode.inline_diff').visible(source), 'inline diff')
+  assert(table.concat(require('hodocode.agent').baseline(source).lines, '\n') .. '\n' == expectedSaved,
+    'diff baseline must be saved disk content, not HEAD or preexisting unsaved edits')
+  assert(#vim.api.nvim_list_tabpages() == 1, 'inline diff must not open tabs')
+  hc.diff()
   hc.config.agent = { 'python3', '-c', [[import json,sys,time
 r=json.load(sys.stdin)
 time.sleep(0.2)
 json.dump({'message':'done','content':'SHOULD NOT APPLY\n'},sys.stdout)]] }
   hc.agent('conflict')
   vim.api.nvim_buf_set_lines(source, -1, -1, false, { '// concurrent edit' })
-  wait(function() return table.concat(vim.api.nvim_buf_get_lines(0, 0, -1, false), '\n'):find('競合', 1, true) ~= nil end, 'conflict guard')
+  wait(function() return require('hodocode.agent').status(source).code == 'conflict' end, 'conflict guard')
   assert(not table.concat(vim.api.nvim_buf_get_lines(source, 0, -1, false), '\n'):find('SHOULD NOT APPLY', 1, true))
-  vim.api.nvim_win_close(0, true)
+  require('hodocode.chat').hide()
+  vim.api.nvim_set_current_buf(source)
   vim.cmd.write()
   local external = vim.fn.readfile(root .. '/main.go')
   external[#external + 1] = '// external edit'

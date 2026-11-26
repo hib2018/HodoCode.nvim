@@ -10,9 +10,14 @@ test: build
 	cd backend && go test ./cmd/hodocode ./internal/...
 	nvim --headless -u NONE -l tests/headless.lua
 	nvim --headless -u NONE -l tests/agent_edit.lua
+	nvim --headless -u NONE -l tests/session_status.lua
 	nvim --headless -u NONE -l tests/edit_patch.lua
 	nvim --headless -u NONE -l tests/edit_events.lua
 	nvim --headless -u NONE -l tests/edit_bridge_core.lua
+	nvim --headless -u NONE -l tests/agent_session.lua
+	nvim --headless -u NONE -l tests/session_ui.lua
+	nvim --headless -u NONE -l tests/session_lifecycle.lua
+	nvim --headless -u NONE -l tests/inline_diff.lua
 	nvim --headless -u NONE -l tests/ux_actions.lua
 	nvim --headless -u NONE -l tests/edit_prompt.lua
 	nvim --headless -u NONE -l tests/edit_marks.lua

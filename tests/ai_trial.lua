@@ -143,48 +143,41 @@ json.dump(dict(version=r['buffer']['version'],message='Summary',comments=[dict(f
   wait(function() return #notices > count end, 'timeout')
   assert(#marks() == 0)
 
-  config.chat = { 'python3', '-c', 'print("unused")' }
-  assert(not chat.open(config), 'placeholder is mandatory')
-  config.chat = { 'python3', '-c', [[import json,sys,os,time,stat
-p=sys.argv[1]
-r=json.load(open(p))
-assert 'SECRET' not in json.dumps(r) and '******' in r['buffer']['content']
-assert stat.S_IMODE(os.stat(p).st_mode)==0o600
-assert stat.S_IMODE(os.stat(os.path.dirname(p)).st_mode)==0o700
-assert os.getcwd()==os.path.dirname(p)
-print('MASKED_CONTEXT_OK',flush=True)
-time.sleep(5)
-]], '{context}' }
-  local slow_config = vim.deepcopy(config)
-  slow_config.backend[3] = slow_config.backend[3]:gsub('import sys,json,hashlib', 'import sys,json,hashlib,time; time.sleep(0.1)')
-  count = #notices
-  assert(chat.open(slow_config))
-  local other = vim.api.nvim_create_buf(true, false)
-  vim.api.nvim_set_current_buf(other)
-  wait(function() return #notices > count end, 'chat stale buffer switch')
-  assert(vim.api.nvim_get_current_buf() == other and not chat.stop())
-  vim.api.nvim_set_current_buf(source)
-  local open_win = vim.api.nvim_open_win
-  vim.api.nvim_open_win = function() error('simulated UI failure') end
-  count = #notices
-  assert(chat.open(config))
-  wait(function() return #notices > count end, 'chat UI failure cleanup')
-  vim.api.nvim_open_win = open_win
-  assert(not chat.stop())
+  -- Chat is the persistent agent session UI, not a terminal/context-file pipeline.
   local input_fail = vim.ui.input
   vim.ui.input = function() error('simulated prompt failure') end
   assert(explain.run(config))
   assert(not explain.stop(), 'prompt failure must clear pending state')
   vim.ui.input = input_fail
+  vim.api.nvim_set_current_buf(source)
+  config.agent_timeout_ms = 1500
+  config.agent = { 'python3', '-c', [[import json,sys,os,stat
+r=json.load(sys.stdin)
+assert stat.S_IMODE(os.stat('.').st_mode)==0o700
+assert r['intent']=='chat' and r['prompt'] in ('first','second')
+assert isinstance(r['history'],list) and r['session_id']
+if r['prompt']=='second':
+    assert any(t['role']=='user' and t['content']=='first' for t in r['history'])
+    assert any(t['role']=='assistant' and t['content']=='PERSISTENT_HISTORY_OK' for t in r['history'])
+json.dump({'message':'PERSISTENT_HISTORY_OK' if r['prompt']=='first' else 'HISTORY_REUSED_OK'},sys.stdout)
+]] }
   assert(chat.open(config))
-  wait(function() return vim.bo.buftype == 'terminal' end, 'terminal launch')
-  local terminal = vim.api.nvim_get_current_buf()
-  assert(vim.inspect(vim.api.nvim_win_get_config(0).title):find('frozen snapshot', 1, true))
-  wait(function() return table.concat(vim.api.nvim_buf_get_lines(terminal, 0, -1, false), '\n'):find('MASKED_CONTEXT_OK', 1, true) end, 'fake terminal context')
-  local dirs = vim.fn.glob(vim.fn.stdpath('cache') .. '/hodocode-ai-*', false, true)
-  assert(#dirs > 0)
-  assert(chat.stop() and not chat.stop())
-  for _, dir in ipairs(dirs) do assert(not uv.fs_stat(dir), 'private context cleanup') end
+  local view = vim.api.nvim_get_current_buf()
+  assert(vim.bo[view].buftype == 'nofile', 'chat must use a native history view')
+  require('hodocode.agent').run(config, 'first', 'chat', { buf = source })
+  wait(function() return not require('hodocode.session').get().request end, 'session chat reply')
+  assert(table.concat(vim.api.nvim_buf_get_lines(view, 0, -1, false), '\n'):find('PERSISTENT_HISTORY_OK', 1, true))
+  local history = vim.deepcopy(require('hodocode.session').get().history)
+  chat.hide()
+  assert(chat.open(config))
+  assert(vim.deep_equal(require('hodocode.session').get().history, history), 'hide discarded history')
+  assert(table.concat(vim.api.nvim_buf_get_lines(0, 0, -1, false), '\n'):find('PERSISTENT_HISTORY_OK', 1, true))
+  local session_id = require('hodocode.session').get().id
+  require('hodocode.agent').run(config, 'second', 'chat', { buf = source })
+  wait(function() return not require('hodocode.session').get().request end, 'shared adapter history')
+  assert(require('hodocode.session').get().id == session_id, 'conversation changed across sends')
+  assert(table.concat(vim.api.nvim_buf_get_lines(0, 0, -1, false), '\n'):find('HISTORY_REUSED_OK', 1, true))
+  chat.hide()
   vim.api.nvim_set_current_buf(source)
   explain.clear()
   local leftover = assert(prep.tempdir())
@@ -196,7 +189,7 @@ time.sleep(5)
   uv.fs_unlink(leftover .. '/extra')
   uv.fs_rmdir(leftover)
   vim.fn.delete(root, 'rf')
-  print('PASS: real backend unsaved/no-go.mod masking, alias/excludes rejection; fake adapter identity/ranges, races, bounds, timeout/cancel, private terminal context/cleanup and leftover warning; no external AI calls')
+  print('PASS: real backend unsaved/no-go.mod masking, alias/excludes rejection; fake adapter identity/ranges, races, bounds, timeout/cancel, persistent native chat history and leftover warning; no external AI calls')
 end
 local ok, err = xpcall(run, debug.traceback)
 if not ok then

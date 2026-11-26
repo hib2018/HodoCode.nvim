@@ -83,17 +83,17 @@ local function run()
   status = nil
   hc.config.agent = nil
   refresh()
-  assert(guide_text():find('編集AI: 未設定', 1, true), 'nil agent must be unset')
+  assert(guide_text():find('エージェント: 未設定', 1, true), 'nil agent must be unset')
   hc.config.agent = {}
   refresh()
-  assert(guide_text():find('編集AI: 未設定', 1, true), 'empty agent must be unset')
+  assert(guide_text():find('エージェント: 未設定', 1, true), 'empty agent must be unset')
   hc.config.agent = { 'test-agent' }
   refresh()
-  assert(guide_text():find('編集AI: 待機', 1, true), 'configured idle agent missing')
+  assert(guide_text():find('エージェント: 待機', 1, true), 'configured idle agent missing')
   hc.config.agent = nil
   status = { phase = 'waiting', running = true, elapsed_ms = 2400 }
   refresh()
-  assert(guide_text():find('未保存', 1, true) and guide_text():find('編集AI: 応答待ち', 1, true), 'dirty/editing-agent guide missing')
+  assert(guide_text():find('未保存', 1, true) and guide_text():find('エージェント: 応答待ち', 1, true), 'dirty/session guide missing')
   assert(not guide_text():find('2s', 1, true), 'guide must not display stale elapsed time')
   for phase, label in pairs({ starting = '開始中', received = '応答受信', validating = '検証中',
     applying = '反映中', done = '完了 d:差分', error = '失敗', cancelled = '中止' }) do

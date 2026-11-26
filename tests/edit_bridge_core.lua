@@ -2,6 +2,7 @@ local function run()
   vim.opt.runtimepath:prepend(vim.fn.getcwd())
   vim.o.hidden = true
   local agent = require('hodocode.agent')
+  local chat = require('hodocode.chat')
   local root, notifications, changes = vim.fn.tempname(), {}, {}
   vim.fn.mkdir(root, 'p')
   local done_text, listener_mode = {}, {}
@@ -45,7 +46,7 @@ if mode=='patch': edits.append({'old_text':'not there','new_text':'unsafe'})
 emit({'event':'result','version':version,'message':'done','edits':edits})
 if mode=='trailing': emit({'event':'status','phase':'received'})
 if mode=='exit': sys.exit(1)
-if mode=='oversize': sys.stderr.write('x'*8192)
+if mode=='oversize': sys.stderr.write('x'*65536)
 ]], '\n', { plain = true }), script)
   local function text(buf) return table.concat(vim.api.nvim_buf_get_lines(buf, 0, -1, false), '\n') end
   local function test(mode, expected_code)
@@ -55,8 +56,9 @@ if mode=='oversize': sys.stderr.write('x'*8192)
     local source = vim.api.nvim_get_current_buf()
     if mode == 'listener' or mode == 'listener_cancel' then listener_mode[source] = mode end
     local timeout = mode == 'timeout' and 50 or 3000
-    agent.run({ agent = { 'python3', script, mode, tostring(timeout) }, max_agent_bytes = 4096,
+    agent.run({ agent = { 'python3', script, mode, tostring(timeout) }, max_agent_bytes = mode == 'oversize' and 32768 or 1024 * 1024,
       agent_timeout_ms = timeout }, 'edit')
+    chat.open({})
     local popup, win = vim.api.nvim_get_current_buf(), vim.api.nvim_get_current_win()
     assert(agent.status(source).running and agent.status(source).elapsed_ms >= 0)
     assert(agent.status(popup) == nil)
@@ -82,12 +84,12 @@ if mode=='oversize': sys.stderr.write('x'*8192)
       assert(text(source) == expected and done_text[source] == expected, 'done announced before source was updated')
       if expected == 'after' then
         assert(vim.bo[source].modified)
-        assert(vim.api.nvim_get_current_buf() == source, 'must return to source')
+        assert(vim.api.nvim_get_current_buf() == popup and vim.api.nvim_win_is_valid(win), 'success must not close or refocus chat')
         vim.api.nvim_buf_call(source, function() vim.cmd.undo() end)
         assert(text(source) == 'before', 'single undo')
       end
     end
-    if vim.api.nvim_win_is_valid(win) then vim.api.nvim_win_close(win, true) end
+    chat.hide()
     vim.api.nvim_buf_delete(source, { force = true })
     assert(agent.status(source) == nil, 'status must clear on wipe')
   end
@@ -101,10 +103,10 @@ if mode=='oversize': sys.stderr.write('x'*8192)
   local spawn_source = vim.api.nvim_get_current_buf()
   local system = vim.system
   vim.system = function() error('SECRET_SPAWN') end
-  agent.run({ agent = { 'missing' }, max_agent_bytes = 4096, agent_timeout_ms = 100 }, 'edit')
+  agent.run({ agent = { 'missing' }, max_agent_bytes = 1024 * 1024, agent_timeout_ms = 100 }, 'edit')
   vim.system = system
   assert(agent.status(spawn_source).phase == 'error' and agent.status(spawn_source).code == 'spawn_failed')
-  vim.api.nvim_win_close(vim.api.nvim_get_current_win(), true)
+  chat.hide()
   vim.api.nvim_buf_delete(spawn_source, { force = true })
   assert(#changes > 10)
   assert(not table.concat(notifications, '\n'):find('SECRET', 1, true), 'private context leaked')

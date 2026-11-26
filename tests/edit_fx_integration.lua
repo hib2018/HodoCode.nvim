@@ -11,7 +11,12 @@ assert os.environ['HODOCODE_EDIT_PROTOCOL']=='2'
 assert os.environ['HODOCODE_AGENT_TIMEOUT_MS'] in ('5000','1500')
 assert 'ORIGINAL supplied' in sys.argv[7] and 'FULL replacement' not in sys.argv[7]
 r=json.load(sys.stdin)
-assert set(r)=={'prompt','buffer'}
+assert set(r)=={'prompt','buffer','intent','session_id','request_id','history'}
+assert r['intent']=='edit' and r['session_id'] and r['request_id']
+assert isinstance(r['history'],list)
+if r['prompt']=='timeout':
+    assert any(t['role']=='user' and t['content']=='change value' for t in r['history'])
+    assert any(t['role']=='assistant' and t['content']=='編集しました' for t in r['history'])
 b=r['buffer']
 assert b['name']=='main.py' and 'path' not in b
 assert '*user* `text`' in b['content'] and r['prompt'] in ('change value','timeout')
@@ -40,30 +45,27 @@ json.dump({'output':json.dumps(result,ensure_ascii=False),'final_output':'WRONG:
   assert(vim.wait(6000, function() return vim.api.nvim_buf_get_lines(buf, 0, 1, false)[1] == 'value = 2' end, 10), table.concat(notices, '\n') .. '\n' .. table.concat(vim.api.nvim_buf_get_lines(0, 0, -1, false), '\n'))
   assert(vim.bo[buf].modified and vim.api.nvim_buf_get_lines(buf, 1, 2, false)[1] == '# *user* `text`')
   assert(vim.deep_equal(vim.fn.readfile(path), { 'value = 1' }), 'must not autosave')
-  if vim.bo.buftype == 'nofile' then vim.api.nvim_win_close(0, true) end
-  assert(vim.api.nvim_get_current_buf() == buf, 'successful edit must return to source')
+  require('hodocode.chat').hide()
+  vim.api.nvim_set_current_buf(buf)
   assert(#vim.api.nvim_list_tabpages() == 1, 'must not open diff automatically')
   assert(agent.status(buf).phase == 'done' and not agent.status(buf).running)
   local marks = vim.api.nvim_buf_get_extmarks(buf, vim.api.nvim_create_namespace('HodoCodeAgentChanges'), 0, -1, {})
   assert(#marks > 0, 'partial edit must mark changed lines')
   config.agent_timeout_ms = 1500
   agent.run(config, 'timeout')
-  local failure_win = vim.api.nvim_get_current_win()
+  require('hodocode.chat').open(config)
   assert(vim.wait(3000, function() return not agent.status(buf).running end, 10), 'helper timeout never completed')
   assert(agent.status(buf).code == 'timeout' and agent.status(buf).phase == 'error', 'inner deadline classification lost')
   assert(vim.api.nvim_buf_get_lines(buf, 0, 1, false)[1] == 'value = 2', 'timeout changed buffer')
   assert(vim.deep_equal(vim.fn.readfile(path), { 'value = 1' }), 'timeout saved buffer')
-  vim.api.nvim_win_close(failure_win, true)
+  require('hodocode.chat').hide()
   vim.api.nvim_set_current_buf(buf)
   agent.diff()
-  local before
-  for _, win in ipairs(vim.api.nvim_tabpage_list_wins(0)) do
-    local b = vim.api.nvim_win_get_buf(win)
-    if b ~= buf then before = b end
-  end
-  assert(before and vim.deep_equal(vim.api.nvim_buf_get_lines(before, 0, -1, false), { 'value = 1' }))
-  assert(not vim.bo[before].modifiable and vim.bo[before].readonly)
-  vim.cmd.tabclose()
+  assert(require('hodocode.inline_diff').visible(buf))
+  assert(vim.deep_equal(agent.baseline(buf).lines, { 'value = 1' }))
+  assert(#vim.api.nvim_list_tabpages() == 1, 'inline diff opened a tab')
+  agent.diff()
+  assert(not require('hodocode.inline_diff').visible(buf))
   agent.stop()
   vim.env.PATH = old_path
   vim.fn.delete(root, 'rf')
