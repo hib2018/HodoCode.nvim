@@ -265,7 +265,7 @@ local function launch(config, prompt, state, ctx)
   state.timer:start(1000, 1000, vim.schedule_wrap(progress))
   local parser = events.new(config.max_agent_bytes, function(phase)
     vim.schedule(function()
-      if active == state and state.running and not state.cancelled then status(state, phase, true); progress() end
+      if active == state and state.running and not state.cancelled then status(state, phase, true) end
     end)
   end)
   local bytes = 0

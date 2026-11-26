@@ -36,6 +36,24 @@ local function run()
   vim.wait(1100, function() return false end, 10)
   assert(changes == stopped_changes, 'finished requests must stop periodic events')
   vim.api.nvim_del_autocmd(hook)
+  local real_system, output = vim.system
+  vim.system = function(_, opts)
+    output = opts.stdout
+    return { kill = function() end }
+  end
+  local received = 0
+  hook = vim.api.nvim_create_autocmd('User', { pattern = 'HodoCodeSessionChanged', callback = function()
+    local current = session.get().request
+    if current and current.phase == 'received' then received = received + 1 end
+  end })
+  agent.run(config, 'next question', 'chat', { buf = buf, cursor = { 1, 0 } })
+  assert(output, 'mock request did not start')
+  output(nil, '{"event":"status","phase":"received"}\n')
+  assert(vim.wait(1000, function() return received > 0 end, 1))
+  assert(received == 1, 'one status event triggered duplicate redraw notifications')
+  agent.stop()
+  vim.system = real_system
+  vim.api.nvim_del_autocmd(hook)
   agent.shutdown()
   vim.fn.delete(path)
   print('session status: ok')
