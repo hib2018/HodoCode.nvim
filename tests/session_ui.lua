@@ -45,13 +45,20 @@ local function run()
   assert(text(buf):find('first answer', 1, true) and text(buf):find('応答待ち（経過 2秒）', 1, true))
   assert(text(buf):find('質問 | 対象: source.lua', 1, true))
   assert(text(buf):find('編集依頼 | 対象: target.lua', 1, true))
-  assert(text(buf):find('[送信済み]', 1, true) and text(buf):find('[適用済み]', 1, true))
+  assert(not text(buf):find('[送信済み]', 1, true) and text(buf):find('[適用済み]', 1, true))
   assert(not text(buf):find('private-request-id', 1, true))
-  assert(text(buf):find('送信時点のコード', 1, true))
+  assert(not text(buf):find('# HodoCode', 1, true))
+  assert(not text(buf):find('送信時点のコード', 1, true))
+  key(buf, 'n', '?')
+  local help = vim.api.nvim_get_current_buf()
+  assert(text(help):find('送信時点のコード', 1, true))
+  key(help, 'n', 'q')
+  assert(vim.api.nvim_get_current_buf() == buf)
   for phase, label in pairs({ validating = '検証中', done = '完了', cancelled = '中止', error = '失敗' }) do
     pending.phase = phase
     vim.api.nvim_exec_autocmds('User', { pattern = 'HodoCodeSessionChanged' })
-    assert(text(buf):find('状態: ' .. label, 1, true))
+    if phase == 'done' then assert(not text(buf):find('状態:', 1, true))
+    else assert(text(buf):find('状態: ' .. label, 1, true)) end
   end
   pending.phase = 'waiting'
   assert(vim.api.nvim_win_get_config(win).width == ui.popup_size())

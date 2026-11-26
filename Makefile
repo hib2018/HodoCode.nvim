@@ -16,6 +16,8 @@ test: build
 	nvim --headless -u NONE -l tests/edit_bridge_core.lua
 	nvim --headless -u NONE -l tests/agent_session.lua
 	nvim --headless -u NONE -l tests/session_ui.lua
+	nvim --headless -u NONE -l tests/chat_render.lua
+	nvim --headless -u NONE -l tests/minimal_ui.lua
 	nvim --headless -u NONE -l tests/session_lifecycle.lua
 	nvim --headless -u NONE -l tests/inline_diff.lua
 	nvim --headless -u NONE -l tests/ux_actions.lua

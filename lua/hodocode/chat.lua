@@ -1,16 +1,7 @@
 local M = {}
 local view = { config = {} }
 local group
-local labels = {
-  idle = '待機中', starting = '起動中', waiting = '応答待ち', validating = '検証中',
-  done = '完了', completed = '完了', cancelled = '中止', error = '失敗',
-  sent = '送信済み', applied = '適用済み', nochange = '変更なし',
-  timeout = '時間制限超過', process_exit = '異常終了', invalid_response = '不正な応答',
-  size_limit = '出力制限超過', invalid_patch = '不正な変更', version_mismatch = 'バージョン不一致',
-  conflict = '競合', provider_exit = '接続先エラー', authentication = '認証エラー',
-  configuration_error = '設定エラー', invalid_json = '不正なJSON', rate_limit = '利用制限',
-  transport = '通信エラー', spawn_failed = '起動失敗', internal_error = '内部エラー',
-}
+local ui = require('hodocode.ui')
 
 local function valid_source(target)
   return target and target.buf and vim.api.nvim_buf_is_valid(target.buf)
@@ -62,41 +53,114 @@ local function append(lines, text)
   end
 end
 
+local quiet = { sent = true, nochange = true, done = true, completed = true, idle = true }
+local fields = { 'role', 'intent', 'file', 'content', 'message', 'outcome', 'status' }
+
+local function history_body(history)
+  local cached = view.history_cache or {}
+  local changed = view.history ~= history or #cached ~= #history
+  for i, entry in ipairs(history) do
+    local previous = cached[i]
+    local dirty = not previous
+    for _, field in ipairs(fields) do
+      if not previous or previous[field] ~= entry[field] then dirty = true end
+    end
+    if dirty then
+      changed = true
+      local lines = { '**' .. (entry.role == 'user' and 'あなた' or 'アシスタント') .. '**' }
+      if entry.intent or entry.file then
+        local intent = entry.intent == 'edit' and '編集依頼' or entry.intent == 'chat' and '質問' or nil
+        lines[#lines + 1] = table.concat(vim.tbl_filter(function(value) return value ~= '' end,
+          { intent or '', entry.file and ('対象: ' .. entry.file) or '' }), ' | ')
+      end
+      append(lines, entry.content or entry.message)
+      local outcome = entry.outcome or entry.status
+      if outcome and not quiet[outcome] then lines[#lines + 1] = '[' .. ui.label(outcome) .. ']' end
+      previous = { lines = lines }
+      for _, field in ipairs(fields) do previous[field] = entry[field] end
+      cached[i] = previous
+    end
+  end
+  for i = #cached, #history + 1, -1 do cached[i] = nil end
+  if changed or not view.body then
+    local lines = {}
+    for _, entry in ipairs(cached) do
+      if #lines > 0 then lines[#lines + 1] = '' end
+      vim.list_extend(lines, entry.lines)
+    end
+    view.body = lines
+  end
+  view.history, view.history_cache = history, cached
+  return view.body
+end
+
+local function latest()
+  vim.api.nvim_win_call(view.win, function()
+    vim.cmd('normal! G$zb')
+  end)
+end
+
 function M.render(force)
   if not view.buf or not vim.api.nvim_buf_is_valid(view.buf) or (force ~= true and not M.visible()) then return end
   local session = require('hodocode.session').get()
-  local lines = { '# HodoCode 会話', '',
-    'Enter/i: 質問（読み取り専用） | A: 編集依頼 | x: 実行中の依頼を中止',
-    '入力: Ctrl-s/Ctrl-Enterで送信 | Esc/q: 会話を隠す',
-    '質問への回答は送信時点のコードに基づきます（送信後の変更は含みません）。', '' }
-  if type(view.config.agent) ~= 'table' or #view.config.agent == 0 then
-    lines[#lines + 1] = '設定: 質問・編集依頼には `agent` にコマンドと引数を設定してください。'
-    lines[#lines + 1] = ''
+  local body = history_body(session.history or {})
+  local missing_agent = type(view.config.agent) ~= 'table' or #view.config.agent == 0
+  local base = view.base
+  if not base or view.base_body ~= body or view.missing_agent ~= missing_agent then
+    base = {}
+    if missing_agent then
+      base[#base + 1] = '設定: 質問・編集依頼には `agent` にコマンドと引数を設定してください。'
+      base[#base + 1] = ''
+    end
+    vim.list_extend(base, body)
+    if #body == 0 then base[#base + 1] = 'Enter: 質問 / A: 編集依頼 / ?: ヘルプ' end
   end
+  local lines = {}
   local request = session.request
   local status = request and require('hodocode.agent').status(request.source) or session.last_status
-  if type(status) == 'table' then
-    lines[#lines + 1] = ('状態: %s（経過 %.0f秒）%s'):format(labels[status.phase or 'idle'] or '処理中',
-      (status.elapsed_ms or 0) / 1000, status.code and (' [' .. (labels[status.code] or '失敗') .. ']') or '')
-  else
-    lines[#lines + 1] = '状態: ' .. (labels[status or (request and request.phase) or 'idle'] or '処理中')
-  end
-  for _, entry in ipairs(session.history or {}) do
+  local phase = type(status) == 'table' and status.phase or status or (request and request.phase)
+  if phase and not quiet[phase] then
     lines[#lines + 1] = ''
-    lines[#lines + 1] = '## ' .. (entry.role == 'user' and 'あなた' or 'アシスタント')
-    if entry.intent or entry.file then
-      local intent = entry.intent == 'edit' and '編集依頼' or entry.intent == 'chat' and '質問' or nil
-      lines[#lines + 1] = table.concat(vim.tbl_filter(function(value) return value ~= '' end,
-        { intent or '', entry.file and ('対象: ' .. entry.file) or '' }), ' | ')
+    if type(status) == 'table' then
+      lines[#lines + 1] = ('状態: %s（経過 %.0f秒）%s'):format(ui.label(phase),
+        (status.elapsed_ms or 0) / 1000, status.code and (' [' .. ui.label(status.code) .. ']') or '')
+    else
+      lines[#lines + 1] = '状態: ' .. (ui.label(phase))
     end
-    append(lines, entry.content or entry.message)
-    local outcome = entry.outcome or entry.status
-    if outcome then lines[#lines + 1] = '[' .. (labels[outcome] or '失敗') .. ']' end
   end
+  local footer = lines
+  local offset = 0
+  local old
+  if base == view.base and view.painted then
+    old, offset = view.footer, #base
+  else
+    old = vim.api.nvim_buf_get_lines(view.buf, 0, -1, false)
+    lines = vim.list_extend(vim.list_extend({}, base), footer)
+  end
+  view.base, view.base_body, view.missing_agent, view.footer = base, body, missing_agent, footer
+  local prefix = 0
+  while prefix < #old and prefix < #lines and old[prefix + 1] == lines[prefix + 1] do prefix = prefix + 1 end
+  if prefix == #old and prefix == #lines then return end
+  local suffix = 0
+  while suffix < #old - prefix and suffix < #lines - prefix
+    and old[#old - suffix] == lines[#lines - suffix] do suffix = suffix + 1 end
+  local saved, tail
+  if M.visible() then
+    vim.api.nvim_win_call(view.win, function()
+      saved = vim.fn.winsaveview()
+      tail = vim.fn.line('w$') == vim.api.nvim_buf_line_count(view.buf)
+    end)
+  end
+  local replacement = {}
+  for i = prefix + 1, #lines - suffix do replacement[#replacement + 1] = lines[i] end
   vim.bo[view.buf].readonly, vim.bo[view.buf].modifiable = false, true
-  vim.api.nvim_buf_set_lines(view.buf, 0, -1, false, lines)
+  vim.api.nvim_buf_set_lines(view.buf, offset + prefix, offset + #old - suffix, false, replacement)
   vim.bo[view.buf].readonly, vim.bo[view.buf].modifiable = true, false
   vim.bo[view.buf].modified = false
+  view.painted = true
+  if saved then
+    if tail then latest() else vim.api.nvim_win_call(view.win, function() vim.fn.winrestview(saved) end) end
+  end
 end
 
 local function compose(intent)
@@ -132,7 +196,9 @@ function M.open(config, target)
   if not view.buf or not vim.api.nvim_buf_is_valid(view.buf) then
     view.buf = vim.api.nvim_create_buf(false, true)
     local buf = view.buf
-    vim.bo[buf].bufhidden, vim.bo[buf].filetype = 'hide', 'markdown'
+    view.painted = nil
+    vim.bo[buf].bufhidden = 'hide'
+    require('hodocode.ui').markdown(buf)
     vim.bo[buf].swapfile, vim.bo[buf].readonly, vim.bo[buf].undolevels = false, true, -1
     for _, key in ipairs({ 'q', '<Esc>', '<C-c>', '<C-d>' }) do
       vim.keymap.set('n', key, function()
@@ -144,6 +210,14 @@ function M.open(config, target)
       vim.keymap.set('n', key, function() compose('chat') end, { buffer = buf, silent = true })
     end
     vim.keymap.set('n', 'A', function() compose('edit') end, { buffer = buf, silent = true })
+    vim.keymap.set('n', '?', function()
+      require('hodocode.ui').float({
+        'Enter/i: 質問（読み取り専用） | A: 編集依頼',
+        'x: 実行中の依頼を中止 | Esc/q: 会話を隠す',
+        '入力: Ctrl-s/Ctrl-Enterで送信',
+        '質問への回答は送信時点のコードに基づきます（送信後の変更は含みません）。',
+      }, 'ヘルプ')
+    end, { buffer = buf, silent = true })
     vim.keymap.set('n', 'x', function() require('hodocode').cancel() end, { buffer = buf, silent = true })
     vim.api.nvim_create_autocmd('BufWipeout', { group = group, buffer = buf, once = true, callback = function()
       if view.buf == buf then view.buf = nil; view.win = nil end
@@ -162,6 +236,7 @@ function M.open(config, target)
       end,
     })
   end
+  latest()
   return true
 end
 
