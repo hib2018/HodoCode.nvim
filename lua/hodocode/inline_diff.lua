@@ -116,10 +116,9 @@ end
 
 function M.refresh(buf, baseline)
   local state = states[buf]
-  if not state and baseline and vim.api.nvim_buf_is_loaded(buf) then state = ensure(buf) end
-  if not state then return end
+  if not state or not state.visible then return end
   if baseline then state.baseline = vim.deepcopy(baseline) end
-  if state.visible then render(buf, state) end
+  render(buf, state)
 end
 
 function M.shutdown()

@@ -48,6 +48,15 @@ local function run()
     assert(vim.deep_equal(actual, expected), vim.inspect(actual) .. '\nexpected: ' .. vim.inspect(expected))
   end
 
+  local attach, attached = vim.api.nvim_buf_attach, 0
+  vim.api.nvim_buf_attach = function(...)
+    attached = attached + 1
+    return attach(...)
+  end
+  diff.refresh(buf, logical({ 'unused' }))
+  assert(attached == 0 and not diff.visible(buf), 'hidden diff attached a buffer watcher')
+  vim.api.nvim_buf_attach = attach
+
   setup(logical({ 'top', 'old1', 'old2', 'end' }), { 'top', 'new1', 'new2', 'end' })
   equal(highlights('DiffChange'), { 1, 2 })
   equal(deleted(), { old(1, false, 'old1'), old(2, false, 'old2') })

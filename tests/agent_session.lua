@@ -4,7 +4,7 @@ local function run()
   vim.notify = function() end
   local opened, refreshed = 0, 0
   package.loaded['hodocode.chat'] = { open = function() opened = opened + 1 end }
-  package.loaded['hodocode.inline_diff'] = { refresh = function(_, baseline)
+  package.loaded['hodocode.inline_diff'] = { visible = function() return true end, refresh = function(_, baseline)
     assert(baseline.lines); refreshed = refreshed + 1
   end }
   local agent, session = require('hodocode.agent'), require('hodocode.session')
@@ -118,9 +118,14 @@ local function run()
   vim.fn.writefile({ 'disk changed' }, path)
   answer({ message = 'bad', content = 'NO\n' })
   assert(body() == 'mine' and session.history()[#session.history()].status == 'conflict')
+  local old_diff, baseline = package.loaded['hodocode.inline_diff'], agent.baseline
+  package.loaded['hodocode.inline_diff'] = nil
+  agent.baseline = function() error('hidden inline diff must not compute its baseline') end
   assert(agent.run(config, 'EOL', 'edit', target))
   answer({ message = 'no final newline', content = 'without EOL' })
   assert(body() == 'without EOL' and not vim.bo[buf].endofline)
+  assert(package.loaded['hodocode.inline_diff'] == nil, 'unused inline diff was loaded')
+  agent.baseline, package.loaded['hodocode.inline_diff'] = baseline, old_diff
   vim.api.nvim_buf_call(buf, function() vim.cmd.undo() end)
   vim.wait(30, function() return vim.bo[buf].endofline end, 1)
   assert(body() == 'mine' and vim.bo[buf].endofline)

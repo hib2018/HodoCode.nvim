@@ -354,7 +354,8 @@ local function launch(config, prompt, state, ctx)
         require('hodocode.edit_marks').set(ctx.buf, ctx.content, text(ctx.buf))
         outcome(state, response.message, 'applied', response.edits)
         finish_status(state)
-        require('hodocode.inline_diff').refresh(ctx.buf, M.baseline(ctx.buf))
+        local diff = package.loaded['hodocode.inline_diff']
+        if diff and diff.visible(ctx.buf) then diff.refresh(ctx.buf, M.baseline(ctx.buf)) end
         return
       end
     end
