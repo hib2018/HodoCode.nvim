@@ -130,7 +130,7 @@ local function snacks(controller, picker)
     actions[name] = function(p, item) controller:act(action, (item or p:current() or {}).node) end
   end
   view.picker = picker.pick({
-    title = 'HodoCode 呼び出しツリー [Snacks] · Space: 開閉 · Enter: 移動',
+    title = '',
     finder = function() return rows(controller.state) end,
     format = function(item) return { { item.text } } end,
     sort = { fields = { 'idx' } },

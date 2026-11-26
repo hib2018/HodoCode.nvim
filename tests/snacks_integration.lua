@@ -55,7 +55,7 @@ local function run()
   end
   local function picker()
     for _, p in ipairs(Snacks.picker.get()) do
-      if p.title:find('HodoCode', 1, true) then return p end
+      if p.opts.actions and p.opts.actions.tree_toggle then return p end
     end
   end
   local function open_tree()
@@ -102,6 +102,7 @@ local function run()
   vim.cmd('normal h')
   check(vim.api.nvim_win_get_cursor(source_win)[2] == 11, 'normal source h movement changed')
   local p = open_tree()
+  check(p.title == '', 'decorative tree title remains')
   local tree_win = vim.api.nvim_get_current_win()
   local function popup_size_matches()
     local width, height = require('hodocode.ui').popup_size()

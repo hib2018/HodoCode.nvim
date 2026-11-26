@@ -1,24 +1,52 @@
 local M = {}
 local history, floats = {}, {}
+local labels = {
+  idle = '待機中', starting = '開始中', waiting = '応答待ち', received = '応答受信',
+  validating = '検証中', applying = '反映中', prompt = '指示入力',
+  done = '完了', completed = '完了', cancelled = '中止', error = '失敗',
+  sent = '送信済み', applied = '適用済み', nochange = '変更なし',
+  timeout = '時間制限超過', process_exit = '異常終了', invalid_response = '不正な応答',
+  size_limit = '出力制限超過', invalid_patch = '不正な変更', version_mismatch = 'バージョン不一致',
+  conflict = '競合', provider_exit = '接続先エラー', authentication = '認証エラー',
+  configuration_error = '設定エラー', invalid_json = '不正なJSON', rate_limit = '利用制限',
+  transport = '通信エラー', spawn_failed = '起動失敗', internal_error = '内部エラー',
+}
+
+function M.label(value)
+  return labels[value] or '処理中'
+end
 
 function M.popup_size()
   return math.max(1, math.min(math.floor(vim.o.columns * 0.9), vim.o.columns - 4)),
     math.max(1, math.min(math.floor(vim.o.lines * 0.8), vim.o.lines - 4))
 end
 
-local function popup_config(title)
+function M.markdown(buf)
+  vim.bo[buf].filetype = 'markdown'
+  vim.api.nvim_buf_call(buf, function()
+    if vim.b.current_syntax ~= 'markdown' then vim.cmd('runtime! syntax/markdown.vim') end
+    vim.cmd('highlight default link markdownCode String')
+    vim.cmd('highlight default link markdownCodeBlock String')
+  end)
+end
+
+local function popup_config()
   local width, height = M.popup_size()
   return {
     relative = 'editor', row = math.max(0, math.floor((vim.o.lines - height) / 2) - 1),
     col = math.max(0, math.floor((vim.o.columns - width) / 2)), width = width, height = height,
-    style = 'minimal', border = 'rounded', title = ' ' .. title .. ' ',
+    style = 'minimal', border = 'single',
   }
 end
 
-function M.open_popup(buf, title)
-  local win = vim.api.nvim_open_win(buf, true, popup_config(title))
+function M.open_popup(buf)
+  local win = vim.api.nvim_open_win(buf, true, popup_config())
+  if vim.bo[buf].filetype == 'markdown' then
+    vim.wo[win].wrap, vim.wo[win].linebreak = true, true
+    vim.wo[win].conceallevel, vim.wo[win].concealcursor = 2, 'nc'
+  end
   local resize = vim.api.nvim_create_autocmd('VimResized', { callback = function()
-    if vim.api.nvim_win_is_valid(win) then vim.api.nvim_win_set_config(win, popup_config(title)) end
+    if vim.api.nvim_win_is_valid(win) then vim.api.nvim_win_set_config(win, popup_config()) end
   end })
   vim.api.nvim_create_autocmd('WinClosed', { pattern = tostring(win), once = true, callback = function()
     vim.api.nvim_del_autocmd(resize)
@@ -47,11 +75,10 @@ function M.float(lines, title, context)
   local source_win = vim.api.nvim_get_current_win()
   local buf = vim.api.nvim_create_buf(false, true)
   vim.bo[buf].bufhidden = 'wipe'
-  vim.bo[buf].filetype = 'markdown'
+  M.markdown(buf)
   vim.api.nvim_buf_set_lines(buf, 0, -1, false, lines)
   vim.bo[buf].modifiable = false
   local win = M.open_popup(buf, title)
-  vim.wo[win].wrap = true
   if context then
     local watch = vim.api.nvim_create_autocmd({ 'TextChanged', 'TextChangedI', 'BufWritePost', 'BufReadPost', 'BufDelete' }, {
       buffer = context.buf, nested = true, callback = function(event)

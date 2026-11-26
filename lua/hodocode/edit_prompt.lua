@@ -6,8 +6,10 @@ function M.open(submit, on_cancel)
   vim.bo[buf].bufhidden, vim.bo[buf].filetype = 'wipe', 'text'
   vim.bo[buf].modifiable = true
   vim.api.nvim_buf_set_lines(buf, 0, -1, false, { '' })
-  local win = require('hodocode.ui').open_popup(buf,
-    'HodoCode 編集依頼 | Ctrl-Enter/Ctrl-s:送信 Esc/q:取消')
+  local win = require('hodocode.ui').open_popup(buf)
+  if vim.fn.has('nvim-0.10') == 1 then
+    vim.api.nvim_win_set_config(win, { footer = ' Ctrl-s:送信 Esc:取消 ' })
+  end
   local done = false
   local function callback(fn, prompt)
     if not fn then return end

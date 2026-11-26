@@ -19,6 +19,8 @@ local function run()
     assert(vim.api.nvim_win_get_width(win) == width, label .. ': wrong width')
     assert(vim.api.nvim_win_get_height(win) == height, label .. ': wrong height')
     local cfg = vim.api.nvim_win_get_config(win)
+    assert(not cfg.title or #cfg.title == 0, label .. ': decorative title remains')
+    assert(vim.deep_equal(cfg.border, { '┌', '─', '┐', '│', '┘', '─', '└', '│' }), label .. ': not a plain border')
     assert(cfg.relative == 'editor' and cfg.col == math.max(0, math.floor((vim.o.columns - width) / 2))
       and cfg.row == math.max(0, math.floor((vim.o.lines - height) / 2) - 1), label .. ': not centered')
   end

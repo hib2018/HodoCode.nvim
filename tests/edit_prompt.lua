@@ -18,6 +18,11 @@ local function run()
     assert(cfg.relative == 'editor' and cfg.width == width and cfg.height == height)
     assert(cfg.col == math.max(0, math.floor((vim.o.columns - width) / 2)))
     assert(cfg.row == math.max(0, math.floor((vim.o.lines - height) / 2) - 1))
+    assert(not cfg.title or #cfg.title == 0, 'prompt must not have a decorative title')
+    assert(vim.deep_equal(cfg.border, { '┌', '─', '┐', '│', '┘', '─', '└', '│' }))
+    if vim.fn.has('nvim-0.10') == 1 then
+      assert(cfg.footer[1][1] == ' Ctrl-s:送信 Esc:取消 ', 'missing concise input hint')
+    end
   end
   local submitted, cancelled = {}, 0
   local function cancel() cancelled = cancelled + 1 end
