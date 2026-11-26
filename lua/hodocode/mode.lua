@@ -120,73 +120,45 @@ function M.actions()
   end)
 end
 
-local phases = {
-  starting = '開始中', waiting = '応答待ち', received = '応答受信', validating = '検証中',
-  applying = '反映中', done = '完了', error = '失敗', cancelled = '中止', prompt = '指示入力',
-}
-
 local function guide(current)
   local width = math.max(1, math.min(90, vim.o.columns - 4))
-  local lines
-  if width >= 86 then
-    lines = { 'HodoCode MODE | ?:操作一覧 | q/Esc:終了 v:編集',
-      '移動 n/N:呼出名 → Enter:定義(黄色) → b:戻る | g/G:関数先頭/末尾',
-      '表示 t:ツリー f:関数一覧 s:構文 K:注釈全文',
-      'AI A:編集 d:差分 E:関数解説 a:行解説 e:会話 x:中止' }
-  elseif width >= 56 then
-    lines = { 'HodoCode MODE | ?:操作一覧 | q/Esc:終了',
-      '移動 n/N:選択 Enter:定義 b:戻る',
-      '表示 t:ツリー f:一覧 K:注釈',
-      'AI A:編集 d:差分 E:解説 e:会話 x:中止' }
-  elseif width >= 24 then
-    lines = { 'HodoCode | ?:操作一覧', 'n/N → Enter → b', 'q/Esc:終了 v:編集' }
-  else
-    lines = { '? help', 'n/N Enter b', 'q exit' }
-  end
   local config = require('hodocode').config
   local agent = require('hodocode.agent')
   local conversation = require('hodocode.session').get()
   local request = conversation.request
   local status = agent.status and agent.status(request and request.source or current.buf)
   if request and not status then status = conversation.last_status end
-  local file = vim.bo[current.buf].modified and '未保存 :writeで解析' or '保存済み'
+  local file = vim.bo[current.buf].modified and '未保存' or '保存済み'
   local configured = type(config.agent) == 'table' and type(config.agent[1]) == 'string' and config.agent[1] ~= ''
-  local phase = status and (phases[status.phase] or status.phase) or (configured and '待機' or '未設定')
-  if width >= 56 then
-    local text = file .. ' | エージェント: ' .. phase
-    local detail = status and status.phase == 'done' and ' d:差分' or ''
-    if vim.fn.strdisplaywidth(text .. detail) <= width then text = text .. detail end
-    lines[#lines + 1] = text .. ' | :HodoCode 操作選択'
-  elseif width >= 24 then
-    lines[#lines + 1] = (vim.bo[current.buf].modified and '未保存' or '保存済み') .. ' | AI:' .. phase
-  end
-  local height = math.max(1, math.min(#lines, vim.o.lines - vim.o.cmdheight - 3))
-  if height == 1 then lines = { width >= 8 and '?:help q' or 'q ?' }
-  elseif height < #lines then lines[height] = 'q/Esc:終了 | ?:操作一覧' end
-  for i = #lines, height + 1, -1 do lines[i] = nil end
-  for i, line in ipairs(lines) do
-    while vim.fn.strdisplaywidth(line) > width do line = vim.fn.strcharpart(line, 0, vim.fn.strchars(line) - 1) end
-    lines[i] = line
-  end
+  local phase = status and require('hodocode.ui').label(status.phase) or (configured and '待機' or '未設定')
+  local line = width >= 56 and ('?:操作一覧 q/Esc:編集 | ' .. file .. ' | AI:' .. phase)
+    or (width >= 24 and ('?:操作 q:編集 | ' .. file) or '? q')
+  while vim.fn.strdisplaywidth(line) > width do line = vim.fn.strcharpart(line, 0, vim.fn.strchars(line) - 1) end
+  local lines, height = { line }, 1
   local exists = current.guide and vim.api.nvim_win_is_valid(current.guide)
   local buf = exists and vim.api.nvim_win_get_buf(current.guide) or vim.api.nvim_create_buf(false, true)
   vim.bo[buf].bufhidden = 'wipe'
   vim.bo[buf].filetype = 'hodocode-mode'
-  vim.bo[buf].modifiable = true
-  vim.api.nvim_buf_set_lines(buf, 0, -1, false, lines)
-  vim.bo[buf].modifiable = false
-  vim.bo[buf].readonly = true
+  if not exists or current.guide_text ~= line then
+    vim.bo[buf].readonly, vim.bo[buf].modifiable = false, true
+    vim.api.nvim_buf_set_lines(buf, 0, -1, false, lines)
+    vim.bo[buf].modifiable, vim.bo[buf].readonly = false, true
+    current.guide_text = line
+  end
   local config = {
-    relative = 'editor', row = math.max(0, vim.o.lines - vim.o.cmdheight - height - 3),
+    relative = 'editor', row = math.max(0, vim.o.lines - vim.o.cmdheight - height - 1),
     col = math.max(0, vim.o.columns - width - 2), width = width, height = height,
-    style = 'minimal', border = 'rounded', focusable = false, zindex = 40,
+    style = 'minimal', border = 'none', focusable = false, zindex = 40,
   }
-  if exists then vim.api.nvim_win_set_config(current.guide, config)
+  local layout = table.concat({ vim.o.columns, vim.o.lines, vim.o.cmdheight }, ':')
+  if exists then
+    if current.guide_layout ~= layout then vim.api.nvim_win_set_config(current.guide, config) end
   else
     current.guide = vim.api.nvim_open_win(buf, false, config)
     vim.wo[current.guide].wrap = false
     vim.api.nvim_create_autocmd('WinClosed', { group = current.group, pattern = tostring(current.guide), nested = true, callback = M.stop })
   end
+  current.guide_layout = layout
 end
 
 function M.start()
@@ -229,7 +201,7 @@ function M.start()
     if state == current then guide(current) end
   end })
   vim.api.nvim_create_autocmd('User', { group = current.group, pattern = 'HodoCodeAgentStatus', callback = function(event)
-    if state == current and event.data and event.data.buf == buf then guide(current) end
+    if state == current and event.data then guide(current) end
   end })
   guide(current)
   require('hodocode.marker').start(buf, current.group)

@@ -83,24 +83,36 @@ local function run()
   status = nil
   hc.config.agent = nil
   refresh()
-  assert(guide_text():find('エージェント: 未設定', 1, true), 'nil agent must be unset')
+  assert(guide_text():find('AI:未設定', 1, true), 'nil agent must be unset')
   hc.config.agent = {}
   refresh()
-  assert(guide_text():find('エージェント: 未設定', 1, true), 'empty agent must be unset')
+  assert(guide_text():find('AI:未設定', 1, true), 'empty agent must be unset')
   hc.config.agent = { 'test-agent' }
   refresh()
-  assert(guide_text():find('エージェント: 待機', 1, true), 'configured idle agent missing')
+  assert(guide_text():find('AI:待機', 1, true), 'configured idle agent missing')
   hc.config.agent = nil
   status = { phase = 'waiting', running = true, elapsed_ms = 2400 }
   refresh()
-  assert(guide_text():find('未保存', 1, true) and guide_text():find('エージェント: 応答待ち', 1, true), 'dirty/session guide missing')
+  assert(guide_text():find('未保存', 1, true) and guide_text():find('AI:応答待ち', 1, true), 'dirty/session guide missing')
   assert(not guide_text():find('2s', 1, true), 'guide must not display stale elapsed time')
   for phase, label in pairs({ starting = '開始中', received = '応答受信', validating = '検証中',
-    applying = '反映中', done = '完了 d:差分', error = '失敗', cancelled = '中止' }) do
+    applying = '反映中', done = '完了', error = '失敗', cancelled = '中止' }) do
     status = { phase = phase, running = false }
     vim.api.nvim_exec_autocmds('User', { pattern = 'HodoCodeAgentStatus', data = { buf = buf, phase = phase, running = false } })
     assert(guide_text():find(label, 1, true), 'agent phase not readable: ' .. phase)
   end
+  local background = vim.api.nvim_create_buf(true, false)
+  local session, agent = require('hodocode.session').get(), require('hodocode.agent')
+  local get_status = agent.status
+  session.request = { source = background }
+  agent.status = function(target)
+    assert(target == background)
+    return { phase = 'received', running = true }
+  end
+  vim.api.nvim_exec_autocmds('User', { pattern = 'HodoCodeAgentStatus', data = { buf = background } })
+  assert(guide_text():find('AI:応答受信', 1, true), 'background request status did not refresh')
+  session.request, agent.status = nil, get_status
+  vim.api.nvim_buf_delete(background, { force = true })
   vim.bo[buf].modified = false
   vim.api.nvim_exec_autocmds('BufModifiedSet', { buffer = buf })
   assert(guide_text():find('保存済み', 1, true), 'saved guide did not refresh')
