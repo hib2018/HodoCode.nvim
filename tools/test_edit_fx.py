@@ -146,6 +146,46 @@ class EditFxTests(unittest.TestCase):
         self.assertEqual([e.get("phase") for e in seen["events"][:-1]], ["starting", "received", "validating"])
         popen.assert_called_once()
 
+    def test_shared_conversation_and_current_buffer_reach_provider(self):
+        request = copy.deepcopy(REQUEST)
+        request.update(session_id="session-a", request_id="session-a-2", intent="edit", history=[
+            {"role": "user", "content": "なぜ？", "intent": "chat", "file": "/private/old/example.go",
+             "request_id": "session-a-1", "status": "sent"},
+            {"role": "assistant", "content": "以前の回答", "status": "nochange"}])
+        status, _, process, *_ = self.invoke(request=request)
+        self.assertEqual(status, 0)
+        wire = json.loads(process.communicate.call_args.args[0])
+        self.assertEqual(wire["session_id"], "session-a")
+        self.assertEqual(wire["request_id"], "session-a-2")
+        self.assertEqual(wire["intent"], "edit")
+        self.assertEqual(wire["history"][0]["file"], "example.go")
+        self.assertEqual(wire["history"][1]["content"], "以前の回答")
+        self.assertEqual(wire["buffer"]["content"], SOURCE)
+        self.assertNotIn("/private/", json.dumps(wire))
+
+    def test_question_uses_readonly_system_and_rejects_edits(self):
+        request = copy.deepcopy(REQUEST)
+        request.update(session_id="s", request_id="s-1", intent="chat", history=[])
+        status, result, _, _, _, seen = self.invoke(
+            {"output": json.dumps({"message": "回答"})}, request=request)
+        self.assertEqual(status, 0)
+        self.assertEqual(seen["argv"][-1], adapter.CHAT_SYSTEM)
+        self.assertEqual(result["message"], "回答")
+        self.assertEqual(result["edits"], [])
+        for change in ({"content": ""}, {"content": SOURCE}, {"edits": EDITS}):
+            status, result, *_ = self.invoke(
+                {"output": json.dumps({"message": "bad", **change})}, request=request)
+            self.assert_error(status, result, "invalid_response")
+
+    def test_invalid_conversation_does_not_start_provider(self):
+        for extra in ({"intent": "execute"}, {"request_id": False}, {"request_id": ""},
+                      {"history": {}}, {"history": [{"role": "system", "content": "bad"}]},
+                      {"history": [{"role": "user", "content": False}]},
+                      {"history": [{"role": "assistant", "content": "x", "edits": [{}]}]}):
+            status, result, _, popen, *_ = self.invoke(request={**REQUEST, **extra})
+            self.assert_error(status, result, "invalid_response")
+            popen.assert_not_called()
+
     def test_older_client_without_protocol_negotiation(self):
         for response in ({"message": "raw", "content": SOURCE}, {"message": "unchanged"}):
             status, result, _, _, _, seen = self.invoke(
