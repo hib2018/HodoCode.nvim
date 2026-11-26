@@ -39,20 +39,36 @@ func run(ctx context.Context, args []string, in io.Reader, out, stderr io.Writer
 	if len(args) > 0 && args[0] == "serve" {
 		return runServe(ctx, args[1:], in, out, stderr)
 	}
+
 	if len(args) == 0 || args[0] == "help" || args[0] == "--help" || args[0] == "-h" {
-		_, err := fmt.Fprintln(out, "Usage: hodocode <deps|functions|flow|tui|explain|cache|serve|prepare-buffer> [flags]\nCommon: --language auto|go|zig|ts|rust|c|js|python --root PATH (local) or --repo https://github.com/owner/repo [--ref REF] [--subdir PATH] [--private]\nRemote: --fetch-timeout 2m --max-bytes 104857600 --cache-dir PATH --refresh\ncache: --repo URL --delete [--cache-dir PATH]\nRemote acquisition and static analysis never send code to AI.\ndeps: --dir . --depth -1 (source directory depth)\nflow/tui: --func NAME [--expand NAME ...]\nexplain: --func NAME --purpose TEXT [--exclude PATTERN ...] [--send] [--timeout 2m]\nexplain defaults to a local preview; --send invokes fx twice. Run a command with --help for flags.")
+		_, err := fmt.Fprintln(out,
+			"Usage: hodocode <deps|functions|flow|tui|explain|cache|serve|prepare-buffer> [flags]\n"+
+				"Common: --language auto|go|zig|ts|rust|c|js|python --root PATH (local) or "+
+				"--repo https://github.com/owner/repo [--ref REF] [--subdir PATH] [--private]\n"+
+				"Remote: --fetch-timeout 2m --max-bytes 104857600 --cache-dir PATH --refresh\n"+
+				"cache: --repo URL --delete [--cache-dir PATH]\n"+
+				"Remote acquisition and static analysis never send code to AI.\n"+
+				"deps: --dir . --depth -1 (source directory depth)\n"+
+				"flow/tui: --func NAME [--expand NAME ...]\n"+
+				"explain: --func NAME --purpose TEXT [--exclude PATTERN ...] [--send] [--timeout 2m]\n"+
+				"explain defaults to a local preview; --send invokes fx twice. Run a command with --help for flags.",
+		)
 		return err
 	}
+
 	command := args[0]
 	switch command {
 	case "deps", "functions", "flow", "tui", "explain", "cache":
 	default:
 		return fmt.Errorf("unknown command %q", command)
 	}
+
 	fs := flag.NewFlagSet(command, flag.ContinueOnError)
 	fs.SetOutput(stderr)
+
 	root := fs.String("root", ".", "repository root; includes nested Go modules")
 	language := fs.String("language", "auto", "auto, go, zig, typescript (ts), rust, c, javascript (js), python")
+
 	repo := fs.String("repo", "", "GitHub repository HTTPS URL (static analysis does not send code to AI)")
 	ref := fs.String("ref", "", "branch, tag or commit (default: repository default branch)")
 	subdir := fs.String("subdir", ".", "analysis directory inside the fetched repository")
@@ -61,16 +77,19 @@ func run(ctx context.Context, args []string, in io.Reader, out, stderr io.Writer
 	maxBytes := fs.Int64("max-bytes", 100<<20, "maximum compressed and expanded repository bytes")
 	cacheDir := fs.String("cache-dir", "", "repository cache directory (default: OS user cache/hodocode/repositories)")
 	refresh := fs.Bool("refresh", false, "download the selected commit again")
+
 	var deleteCache bool
 	if command == "cache" {
 		fs.BoolVar(&deleteCache, "delete", false, "delete all cached commits for --repo without fetching")
 	}
+
 	var dir, name, purpose *string
 	var nvimServer string
 	var depth *int
 	var send *bool
 	var timeout *time.Duration
 	var expansions, excludes list
+
 	if command == "deps" {
 		dir = fs.String("dir", ".", "source directory relative to root")
 		depth = fs.Int("depth", -1, "source directory depth; 0 = directory only, -1 = unlimited")
@@ -96,6 +115,7 @@ func run(ctx context.Context, args []string, in io.Reader, out, stderr io.Writer
 	if command == "explain" {
 		send = fs.Bool("send", false, "send metadata and sanitized selected snippets to fx after auditing preview")
 	}
+
 	if err := fs.Parse(args[1:]); err != nil {
 		if err == flag.ErrHelp {
 			return nil
@@ -105,11 +125,13 @@ func run(ctx context.Context, args []string, in io.Reader, out, stderr io.Writer
 	if fs.NArg() != 0 {
 		return fmt.Errorf("unexpected arguments: %s", strings.Join(fs.Args(), " "))
 	}
+
 	explicit := map[string]bool{}
 	fs.Visit(func(f *flag.Flag) { explicit[f.Name] = true })
 	if *repo != "" && explicit["root"] {
 		return fmt.Errorf("--repo and --root are mutually exclusive")
 	}
+
 	if command == "cache" {
 		for flag := range explicit {
 			if flag != "repo" && flag != "delete" && flag != "cache-dir" {
@@ -121,6 +143,7 @@ func run(ctx context.Context, args []string, in io.Reader, out, stderr io.Writer
 		}
 		return repository.RemoveCache(*cacheDir, *repo)
 	}
+
 	if *repo == "" {
 		for _, flag := range []string{"ref", "subdir", "private", "fetch-timeout", "max-bytes", "cache-dir", "refresh"} {
 			if explicit[flag] {
@@ -128,6 +151,7 @@ func run(ctx context.Context, args []string, in io.Reader, out, stderr io.Writer
 			}
 		}
 	}
+
 	var p *analyze.Project
 	var err error
 	if *repo == "" {
@@ -136,13 +160,24 @@ func run(ctx context.Context, args []string, in io.Reader, out, stderr io.Writer
 		if *fetchTimeout <= 0 || *maxBytes <= 0 {
 			return fmt.Errorf("--fetch-timeout and --max-bytes must be positive")
 		}
-		if filepath.IsAbs(*subdir) || *subdir == ".." || strings.HasPrefix(filepath.Clean(*subdir), ".."+string(filepath.Separator)) {
+		if filepath.IsAbs(*subdir) || *subdir == ".." ||
+			strings.HasPrefix(filepath.Clean(*subdir), ".."+string(filepath.Separator)) {
 			return fmt.Errorf("--subdir must stay inside the repository")
 		}
-		snapshot, fetchErr := repository.Fetch(ctx, repository.Options{URL: *repo, Ref: *ref, CacheDir: *cacheDir, Timeout: *fetchTimeout, MaxBytes: *maxBytes, Refresh: *refresh, Private: *private})
+
+		snapshot, fetchErr := repository.Fetch(ctx, repository.Options{
+			URL:      *repo,
+			Ref:      *ref,
+			CacheDir: *cacheDir,
+			Timeout:  *fetchTimeout,
+			MaxBytes: *maxBytes,
+			Refresh:  *refresh,
+			Private:  *private,
+		})
 		if fetchErr != nil {
 			return fetchErr
 		}
+
 		p, err = analyze.LoadSubdirLanguageContext(ctx, snapshot.Root, *subdir, *language)
 		if err == nil {
 			p.RepositoryURL, p.CommitSHA = snapshot.URL, snapshot.SHA
@@ -151,6 +186,7 @@ func run(ctx context.Context, args []string, in io.Reader, out, stderr io.Writer
 	if err != nil {
 		return err
 	}
+
 	if p.RepositoryURL != "" {
 		prefix := "#"
 		if command == "deps" || command == "flow" {
@@ -160,6 +196,7 @@ func run(ctx context.Context, args []string, in io.Reader, out, stderr io.Writer
 			return err
 		}
 	}
+
 	switch command {
 	case "functions":
 		for _, id := range functionIDs(p) {
@@ -169,6 +206,7 @@ func run(ctx context.Context, args []string, in io.Reader, out, stderr io.Writer
 			}
 		}
 		return nil
+
 	case "deps":
 		edges, err := p.Dependencies(*dir, *depth)
 		if err != nil {
@@ -176,16 +214,27 @@ func run(ctx context.Context, args []string, in io.Reader, out, stderr io.Writer
 		}
 		_, err = io.WriteString(out, analyze.Mermaid(edges))
 		return err
+
 	case "tui":
 		if *timeout <= 0 {
 			return fmt.Errorf("timeout must be positive")
 		}
 		if input, ok := in.(*os.File); ok && os.Getenv("TERM") != "dumb" {
 			if output, ok := out.(*os.File); ok && terminalSupported(input, output) {
-				return fullScreen(ctx, p, *name, expansions, input, output, agentOptions{runner: runner, purpose: *purpose, excludes: excludes, timeout: *timeout}, nvimServer)
+				return fullScreen(
+					ctx, p, *name, expansions, input, output,
+					agentOptions{
+						runner:   runner,
+						purpose:  *purpose,
+						excludes: excludes,
+						timeout:  *timeout,
+					},
+					nvimServer,
+				)
 			}
 		}
 		return interactive(p, *name, expansions, in, out)
+
 	case "flow":
 		s, err := newFlow(p, *name, expansions)
 		if err != nil {
@@ -193,10 +242,12 @@ func run(ctx context.Context, args []string, in io.Reader, out, stderr io.Writer
 		}
 		_, err = io.WriteString(out, s.diagram())
 		return err
+
 	case "explain":
 		if *timeout <= 0 {
 			return fmt.Errorf("timeout must be positive")
 		}
+
 		id, err := p.Resolve(*name)
 		if err != nil {
 			return err
@@ -205,11 +256,13 @@ func run(ctx context.Context, args []string, in io.Reader, out, stderr io.Writer
 		if err != nil {
 			return err
 		}
+
 		if u := p.SourceURL(id); u != "" {
 			if _, err := fmt.Fprintln(out, "# "+u); err != nil {
 				return err
 			}
 		}
+
 		req, err := explain.Prepare(p, id, *purpose, edges, excludes)
 		if err != nil {
 			return err
@@ -221,8 +274,10 @@ func run(ctx context.Context, args []string, in io.Reader, out, stderr io.Writer
 		if _, err = fmt.Fprintln(stderr, req.Preview()); err != nil {
 			return err
 		}
+
 		ctx, cancel := context.WithTimeout(ctx, *timeout)
 		defer cancel()
+
 		text, err := req.Explain(ctx, runner)
 		if err != nil {
 			return err
