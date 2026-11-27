@@ -1,0 +1,203 @@
+{
+  "cleanup_ok": true,
+  "profile": {
+    "model": "gpt-6.2-sol",
+    "effort": "auto",
+    "connected_providers": [
+      "codex"
+    ]
+  },
+  "command": "HODOCODE_ACP_LIVE=1 HODOCODE_BENCH_ONLY=1 nvim --headless -u NONE -l tools/bench_acp.lua",
+  "current_run_model_turns": 8,
+  "native_argv": [
+    "fx",
+    "--no-additional-dirs",
+    "acp",
+    "--provider",
+    "codex",
+    "--model",
+    "gpt-6.2-sol",
+    "--effort",
+    "auto",
+    "--permission-mode",
+    "ask"
+  ],
+  "prior_model_turns": 3,
+  "profile_finish": {
+    "model": "gpt-6.2-sol",
+    "effort": "auto",
+    "connected_providers": [
+      "codex"
+    ]
+  },
+  "prompt": "Change only const Value = 0 to const Value = 1. Do not use tools. Return the structured edit response expected by HodoCode.",
+  "source": "const Value = 0\n",
+  "sample_pairs_per_transport": 2,
+  "notice_capability_fix": {
+    "source": "https://github.com/vercel-labs/fx/blob/6196071b3c1b/src/acp/server.zig#L2911",
+    "cause": "fx requires clientCapabilities.session.notices to be an object; boolean true did not opt in and skill warnings arrived as assistant text.",
+    "encoding": "{}"
+  },
+  "profile_after_failure": {
+    "model": "gpt-6.2-sol",
+    "effort": "auto",
+    "connected_providers": [
+      "codex"
+    ]
+  },
+  "status": "passed",
+  "failure_diagnosis": {
+    "updated_at_ms": 1795777264159,
+    "suspected_cause": "At failure: pre-answer notification text mixed into strict-JSON ACP stream; saved final assistant was clean JSON.",
+    "resolution": "The matching fx source requires an object for session.notices. After correcting boolean true to {}, all eight resumed edit requests passed without relaxing JSON validation.",
+    "own_native_session_id": "nHpgPJsprexn",
+    "saved_final_assistant_json_valid": true,
+    "saved_final_assistant_edit_correct": true,
+    "saved_history_turns": 1,
+    "created_at_ms": 1795777261428
+  },
+  "current_run_max_turns": 8,
+  "medians_ms": {
+    "json": {
+      "continuation": 5388.5,
+      "initial": 4548
+    },
+    "acp": {
+      "continuation": 3239.5,
+      "initial": 5318
+    }
+  },
+  "fx_version": "0.0.18",
+  "prior_failure": {
+    "stage": "acp_sample_1",
+    "reason": "invalid_response"
+  },
+  "profile_unchanged_after_failure": true,
+  "platform": "Darwin 25.5",
+  "date": "2026-11-26",
+  "max_model_turns": 14,
+  "model_turns": 11,
+  "samples": [
+    {
+      "transport": "acp",
+      "initial": {
+        "apply_ms": 0.7574999332427979,
+        "startup_ms": 2407.956374883652,
+        "first_chunk_ms": 5059.517082929611,
+        "complete_ms": 5061.691124916077,
+        "total_ms": 5062,
+        "id_stable": true,
+        "wall_ms": 5067.645541906357
+      },
+      "continuation": {
+        "apply_ms": 0.4956660270690918,
+        "startup_ms": 0.02608299255371094,
+        "first_chunk_ms": 3787.966332912445,
+        "complete_ms": 3788.262207984924,
+        "total_ms": 3789,
+        "id_stable": true,
+        "wall_ms": 3789.539833068848
+      },
+      "sample": 1
+    },
+    {
+      "transport": "acp",
+      "initial": {
+        "apply_ms": 0.841792106628418,
+        "startup_ms": 3132.842833995819,
+        "first_chunk_ms": 5572.347584009171,
+        "complete_ms": 5573.129500150681,
+        "total_ms": 5574,
+        "id_stable": true,
+        "wall_ms": 5580.272541046143
+      },
+      "continuation": {
+        "apply_ms": 1.446917057037354,
+        "startup_ms": 0.07675004005432129,
+        "first_chunk_ms": 2686.87504196167,
+        "complete_ms": 2688.224167108536,
+        "total_ms": 2690,
+        "id_stable": true,
+        "wall_ms": 2691.644749879837
+      },
+      "sample": 2
+    },
+    {
+      "transport": "json",
+      "initial": {
+        "apply_ms": 9.28712511062622,
+        "startup_ms": null,
+        "first_chunk_ms": null,
+        "complete_ms": null,
+        "total_ms": 4520,
+        "wall_ms": 4533.581666946411
+      },
+      "continuation": {
+        "apply_ms": 8.301124811172485,
+        "startup_ms": null,
+        "first_chunk_ms": null,
+        "complete_ms": null,
+        "total_ms": 6150,
+        "wall_ms": 6151.287125110626
+      },
+      "sample": 1
+    },
+    {
+      "transport": "json",
+      "initial": {
+        "apply_ms": 9.466500043869019,
+        "startup_ms": null,
+        "first_chunk_ms": null,
+        "complete_ms": null,
+        "total_ms": 4576,
+        "wall_ms": 4588.536041975021
+      },
+      "continuation": {
+        "apply_ms": 8.29812479019165,
+        "startup_ms": null,
+        "first_chunk_ms": null,
+        "complete_ms": null,
+        "total_ms": 4627,
+        "wall_ms": 4628.258749961853
+      },
+      "sample": 2
+    }
+  ],
+  "workflow": {
+    "edit": {
+      "id_stable": true,
+      "startup_ms": 0.03616690635681152,
+      "first_chunk_ms": 3212.051458835602,
+      "complete_ms": 3218.711333990097,
+      "total_ms": 3222,
+      "apply_ms": 2.841334104537964,
+      "wall_ms": 3223.903167009354
+    },
+    "pre_fix_timings": true,
+    "first_chunk_comparable": false,
+    "question": {
+      "id_stable": true,
+      "startup_ms": 2757.213958024979,
+      "first_chunk_ms": 2758.930416107178,
+      "complete_ms": 6555.823208093643,
+      "total_ms": 6556,
+      "apply_ms": 0.1118748188018799,
+      "wall_ms": 6561.452749967575
+    },
+    "validated": true
+  },
+  "notes": [
+    "Only public dummy fixtures in owned temporary directories are supplied to models.",
+    "Native ACP persists its dummy-input sessions by design; no fx history is deleted.",
+    "Same fx version/provider/model/effort/source/prompt/edit intent; serialized wire, system prompts, and history representation differ.",
+    "ACP keeps one process/session within each pair; JSON includes adapter, CLI startup, and private working directory per request.",
+    "HodoCode history is reset between every transport pair; both requests within a pair share history.",
+    "JSON first_chunk_ms is null: its first JSON is the final result, not an observable first-token event.",
+    "ACP complete_ms precedes application; apply_ms observes validating-to-done including patch validation, markers and undo guard.",
+    "No speedup assumption; two samples per transport, initial and identical continuation inputs.",
+    "Initial command-line attempt used unsupported aliases and exited before a model call; corrected documented post-command flags are recorded in native_argv.",
+    "The prior run used three requests: two successful workflow requests and one invalid-response benchmark request.",
+    "Benchmark-only resume preserves the successful prior workflow; two pairs per transport, eight new requests, three prior attempts, eleven cumulative requests.",
+    "Preserved workflow question first_chunk_ms includes a pre-fix skill warning, not model TTFT; benchmark measurements use corrected notice capability."
+  ]
+}
