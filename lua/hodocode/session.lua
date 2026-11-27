@@ -18,6 +18,8 @@ local function real(path)
   return vim.fs.joinpath(real(parent), vim.fs.basename(path))
 end
 
+M.realpath = real
+
 local function contains(root, path)
   return path == root or path:sub(1, #root + (root == '/' and 0 or 1)) == (root == '/' and '/' or root .. '/')
 end

@@ -14,6 +14,7 @@ test: build
 	nvim --headless -u NONE -l tests/edit_patch.lua
 	nvim --headless -u NONE -l tests/edit_events.lua
 	nvim --headless -u NONE -l tests/edit_bridge_core.lua
+	nvim --headless -u NONE -l tests/repository_context.lua
 	nvim --headless -u NONE -l tests/acp_config.lua
 	nvim --headless -u NONE -l tests/acp_rpc.lua
 	nvim --headless -u NONE -l tests/acp.lua
