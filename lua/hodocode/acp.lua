@@ -3,7 +3,7 @@ local rpc = require('hodocode.acp_rpc')
 local uv = vim.uv or vim.loop
 local records = {}
 local shutting_down = false
-local instructions = [[You are answering inside HodoCode. Never use tools, filesystem writes, shell commands, or MCP. The latest embedded source snapshot is authoritative, including unsaved changes. Do not modify files directly. For chat, answer naturally in Markdown. For edit, return only strict JSON: {"message":"explanation","edits":[{"old_text":"exact source","new_text":"replacement"}]}, or {"message":"explanation","content":"complete replacement"}. Never use Markdown fences. At most 256 edits.]]
+local instructions = [[You are answering inside HodoCode. You may use only read_file, grep_files and glob_files to discover and read relevant source files inside Metadata.repository_root, on demand. Respect .gitignore; skip .git, node_modules, build, dist, target, .cache, credentials (.env files and private keys), binary files and files larger than 1 MiB. Never use filesystem writes, shell commands, MCP or other tools. Embedded source snapshots are authoritative, including unsaved changes: never replace them with disk versions. Metadata.path is the only editable file; all other files and snapshots are read-only context. Do not modify files directly. For chat, answer naturally in Markdown. For edit, after any read tools finish, return only strict JSON: {"message":"explanation","edits":[{"old_text":"exact source","new_text":"replacement"}]}, or {"message":"explanation","content":"complete replacement"}. Never use Markdown fences. At most 256 edits.]]
 
 local function call(callback, ...)
   if callback then return pcall(callback, ...) end
@@ -91,6 +91,10 @@ function M.prompt(config, payload, opts)
   end
   payload = { root = root, prompt = payload.prompt, intent = payload.intent, request_id = payload.request_id,
     buffer = vim.deepcopy(payload.buffer) }
+  local context, context_error = require('hodocode.repository').snapshots(root, type(payload.buffer.path) == 'string' and payload.buffer.path or root .. '/buffer', limit)
+  if not context then return nil, context_error end
+  payload.context = context
+  if #vim.json.encode(payload) > limit then return nil, 'size_limit' end
   local signature = vim.json.encode(argv)
   local record = records[root]
   if record and record.busy then return nil, 'busy' end
@@ -150,17 +154,20 @@ function M.prompt(config, payload, opts)
     if done or cancelled then return end
     handle.metrics.startup_ms = now() - began
     local metadata = { intent = payload.intent, path = payload.buffer.path, cursor = payload.buffer.cursor,
-      request_id = payload.request_id }
+      request_id = payload.request_id, repository_root = root }
     local content = { { type = 'text', text = 'Current request: ' .. payload.prompt .. '\nMetadata: ' .. vim.json.encode(metadata) } }
-    if record.caps.embeddedContext then
-      local path = type(payload.buffer.path) == 'string' and payload.buffer.path or root .. '/buffer'
-      content[#content + 1] = { type = 'resource', resource = {
-        uri = 'file://' .. path:gsub('[^%w%-%._~/]', function(c) return string.format('%%%02X', c:byte()) end),
-        mimeType = 'text/plain', text = payload.buffer.content,
-      } }
-    else
-      content[#content + 1] = { type = 'text', text = 'Authoritative current source snapshot:\n' .. payload.buffer.content }
+    local function snapshot(path, text)
+      if record.caps.embeddedContext then
+        content[#content + 1] = { type = 'resource', resource = {
+          uri = 'file://' .. path:gsub('[^%w%-%._~/]', function(c) return string.format('%%%02X', c:byte()) end),
+          mimeType = 'text/plain', text = text,
+        } }
+      else
+        content[#content + 1] = { type = 'text', text = 'Authoritative source snapshot (' .. path .. '):\n' .. text }
+      end
     end
+    snapshot(type(payload.buffer.path) == 'string' and payload.buffer.path or root .. '/buffer', payload.buffer.content)
+    for _, source in ipairs(payload.context) do snapshot(source.path, source.content) end
     -- Agents without the systemPrompt extension still receive the same constraints each turn.
     if not record.caps.systemPrompt then table.insert(content, 1, { type = 'text', text = instructions }) end
     prompt_sent = true
@@ -196,6 +203,8 @@ function M.prompt(config, payload, opts)
       elseif update.sessionUpdate == 'notice' then
         call(opts.on_tool, { sessionUpdate = 'notice' })
       elseif update.sessionUpdate == 'tool_call' or update.sessionUpdate == 'tool_call_update' then
+        -- Only the answer after the last tool call is an edit result, not progress prose.
+        if update.sessionUpdate == 'tool_call' and payload.intent == 'edit' then chunks = {} end
         local id = update.toolCallId
         if not bounded(id, 256) then return end
         if not tools[id] then

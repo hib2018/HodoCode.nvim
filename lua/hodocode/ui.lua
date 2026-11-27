@@ -6,7 +6,7 @@ local labels = {
   initializing = '初期化中', connecting = '接続中', streaming = '回答受信中',
   reconnecting = '再接続中', cancelling = '中止応答待ち', permission = '権限確認',
   disconnected = '接続切断', cancel_timeout = '中止応答なし', initialization = '初期化失敗',
-  busy = '実行中', outside_root = '対象範囲外',
+  busy = '実行中', outside_root = '対象範囲外', invalid_buffer = '未対応バッファ',
   pending = '待機中', in_progress = '実行中', failed = '失敗',
   resume_failed = '会話の再接続失敗', resume_unsupported = '会話の再接続非対応',
   done = '完了', completed = '完了', cancelled = '中止', error = '失敗',

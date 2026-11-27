@@ -26,7 +26,12 @@ for line in sys.stdin:
         result(m,dict(protocolVersion=1,agentInfo=dict(name='fake',version='1'),agentCapabilities=dict(promptCapabilities=dict(embeddedContext=mode!='fallback'),sessionCapabilities=dict(resume={},close={},systemPrompt={}))))
     elif method in ['session/new','session/resume']:
         assert p['cwd']==os.getcwd() and p['mcpServers']==[]
-        if method=='session/new': assert isinstance(p['systemPrompt'],list)
+        if method=='session/new':
+            assert isinstance(p['systemPrompt'],list)
+            policy=p['systemPrompt'][0]['text']
+            assert 'read_file, grep_files and glob_files' in policy
+            assert 'Metadata.path is the only editable file' in policy
+            assert 'Never use filesystem writes, shell commands, MCP' in policy
         else:
             assert p['sessionId']==sid
             chunk('REPLAY')
@@ -36,14 +41,18 @@ for line in sys.stdin:
     elif method=='session/prompt':
         count+=1
         request=p['prompt'][0]['text']
+        assert json.loads(request.split('\nMetadata: ',1)[1])['repository_root']==os.getcwd()
         if 'die' in request: sys.exit(7)
         if 'hold' in request: held=m; continue
         if 'error' in request:
             emit(dict(id=m['id'],error=dict(code=-1,message='PRIVATE'))); continue
         if 'permission' in request:
+            snapshots=[entry['resource']['text'] for entry in p['prompt'] if entry['type']=='resource']
+            assert 'unsaved helper\n' in snapshots and 'disk helper\n' not in snapshots
             emit(dict(id=700+count,method='session/request_permission',params=dict(sessionId=sid,options=[dict(optionId='allow',kind='allow_once',name='Allow')],toolCall=dict(toolCallId='t',kind='read'))))
             emit(dict(id=800+count,method='fs/write_text_file',params={}))
         emit(dict(method='session/update',params=dict(sessionId=sid,update=dict(sessionUpdate='notice',title='Skill warning',text='NOT AN ANSWER'))))
+        if '"intent":"edit"' in request: chunk('Inspecting the repository first.')
         emit(dict(method='session/update',params=dict(sessionId=sid,update=dict(sessionUpdate='tool_call',toolCallId='t',title='Read',kind='read',status='pending',rawInput='PRIVATE'))))
         chunk('WRONG','other')
         emit(dict(method='session/update',params=dict(sessionId=sid,update=dict(sessionUpdate='agent_thought_chunk',content=dict(type='text',text='THOUGHT')))))
@@ -74,6 +83,11 @@ for line in sys.stdin:
     assert(calls == 1)
     return value, code, h
   end
+  local helper_path = root .. '/helper.go'
+  vim.fn.writefile({ 'disk helper' }, helper_path)
+  local helper = vim.fn.bufadd(helper_path)
+  vim.fn.bufload(helper)
+  vim.api.nvim_buf_set_lines(helper, 0, -1, false, { 'unsaved helper' })
   local chunks, tools, permissions = {}, {}, 0
   local value, code, h = request('permission', 'edit', {
     on_chunk = function(text) chunks[#chunks + 1] = text end,
@@ -89,9 +103,11 @@ for line in sys.stdin:
       done({ outcome = { outcome = 'selected', optionId = 'allow' } })
     end,
   })
-  assert(value.message == 'change' and not code and vim.json.decode(table.concat(chunks)).message == 'change')
+  assert(value.message == 'change' and not code and chunks[1] == 'Inspecting the repository first.')
+  assert(vim.json.decode(table.concat(chunks, '', 2)).message == 'change', 'progress prose entered the final JSON')
   assert(value.edits[1].new_text == 'changed' and value.version == vim.fn.sha256('source'))
   assert(permissions == 1 and #tools == 2 and h.metrics.first_chunk_ms and h.metrics.complete_ms)
+  assert(vim.fn.readfile(helper_path)[1] == 'disk helper' and vim.bo[helper].modified)
   local id = acp.info(root).sessionId
   value = request('second')
   assert(value.message == 'answer-2' and acp.info(root).sessionId == id)
@@ -105,7 +121,8 @@ for line in sys.stdin:
     if m.method == 'session/new' then news = news + 1 end
     if m.method == 'session/prompt' then
       prompts = prompts + 1
-      assert(#m.params.prompt == 2 and m.params.prompt[2].type == 'resource')
+      assert(#m.params.prompt == 3 and m.params.prompt[2].type == 'resource')
+      assert(m.params.prompt[3].resource.text == 'unsaved helper\n')
       assert(not line:find('DO NOT REPLAY', 1, true))
     end
     if m.error then assert(m.error.code == -32601); unknown = true end
