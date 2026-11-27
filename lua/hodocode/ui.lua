@@ -3,6 +3,12 @@ local history, floats = {}, {}
 local labels = {
   idle = '待機中', starting = '開始中', waiting = '応答待ち', received = '応答受信',
   validating = '検証中', applying = '反映中', prompt = '指示入力',
+  initializing = '初期化中', connecting = '接続中', streaming = '回答受信中',
+  reconnecting = '再接続中', cancelling = '中止応答待ち', permission = '権限確認',
+  disconnected = '接続切断', cancel_timeout = '中止応答なし', initialization = '初期化失敗',
+  busy = '実行中', outside_root = '対象範囲外',
+  pending = '待機中', in_progress = '実行中', failed = '失敗',
+  resume_failed = '会話の再接続失敗', resume_unsupported = '会話の再接続非対応',
   done = '完了', completed = '完了', cancelled = '中止', error = '失敗',
   sent = '送信済み', applied = '適用済み', nochange = '変更なし',
   timeout = '時間制限超過', process_exit = '異常終了', invalid_response = '不正な応答',

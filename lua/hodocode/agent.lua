@@ -163,7 +163,7 @@ local function status(state, phase, running, code)
   if state.started and vim.api.nvim_buf_is_valid(state.source) then
     statuses[state.source] = { phase = phase, elapsed_ms = elapsed(state), running = running, code = code }
   end
-  session.get().last_status = { source = state.source, phase = phase, elapsed_ms = elapsed(state), running = running, code = code }
+  state.session.last_status = { source = state.source, phase = phase, elapsed_ms = elapsed(state), running = running, code = code }
   if changed then
     vim.api.nvim_exec_autocmds('User', { pattern = 'HodoCodeAgentStatus',
       data = { buf = state.source, phase = phase, running = running } })
@@ -183,7 +183,7 @@ local function finish_status(state, code)
   if state.timer then state.timer:stop(); state.timer:close(); state.timer = nil end
   local phase = code == 'cancelled' and 'cancelled' or (code and 'error' or 'done')
   if active == state then active = nil end
-  if session.get().request == state then session.get().request = nil end
+  if state.session.request == state then state.session.request = nil end
   status(state, phase, false, code)
 end
 
@@ -203,6 +203,11 @@ local failures = {
   rate_limit = 'AI接続先の利用制限です。時間をおいて再実行してください。',
   transport = 'AI接続先との通信に失敗しました。接続を確認して再実行してください。',
   spawn_failed = 'エージェントを起動できません。実行ファイルの設定を確認してください。',
+  disconnected = 'ACP接続が切断されました。エージェントを確認して再実行してください。',
+  resume_failed = 'ACP会話を復帰できませんでした。履歴を確認してください。依頼は再送していません。',
+  resume_unsupported = 'ACPエージェントは同じ会話の復帰に未対応です。Neovimを再起動して新しい会話を開始してください。',
+  cancel_timeout = 'ACP中止の確認がタイムアウトしました。接続を終了しました。再実行してください。',
+  initialization = 'ACPの初期化に失敗しました。起動引数とACP対応を確認してください。',
   internal_error = 'エージェント内部エラーです。設定を確認して再実行してください。',
 }
 local function failure_text(state, code, detail)
@@ -215,14 +220,20 @@ local function outcome(state, message, result, edits)
   if state.recorded then return end
   state.recorded = true
   session.append('assistant', message, { intent = state.intent, file = state.file,
-    request_id = state.id, status = result, outcome = result, edits = edits })
+    request_id = state.id, status = result, outcome = result, edits = edits }, state.session)
 end
 
 local function cancel(state, code)
+  if state.cancelled then return end
   state.cancelled = true
   outcome(state, failures[code or 'cancelled'] or failures.process_exit, code or 'cancelled')
+  if state.transport == 'acp' and (state.acp_handle or state.acp_pending) then
+    status(state, 'cancelling', true, code or 'cancelled')
+    if state.acp_handle then state.acp_handle.cancel() end
+    return
+  end
   if state.process then state.process:kill(15) end
-  prepare.clean_cwd(state)
+  if state.cwd then prepare.clean_cwd(state) end
   finish_status(state, code or 'cancelled')
 end
 
@@ -234,6 +245,9 @@ function M.shutdown()
   shutting_down = true
   if draft then local close = draft; draft = nil; close() end
   M.stop()
+  local acp = package.loaded['hodocode.acp']
+  if acp then acp.shutdown() end
+  if active then finish_status(active, 'cancelled') end
   snapshots, statuses, undo_eol = {}, {}, {}
   session.reset()
   shutting_down = false
@@ -244,60 +258,9 @@ local function launch(config, prompt, state, ctx)
   if not ctx.valid() then
     cancel(state, 'conflict'); error_message('競合: 対象バッファまたはファイルが変更されました。再実行してください'); return
   end
-  local payload = vim.json.encode({ prompt = prompt, session_id = session.get().id, request_id = state.id,
-    intent = state.intent, history = state.history, buffer = {
-    path = ctx.path, content = ctx.content, modified = ctx.options.modified,
-    filetype = ctx.options.filetype, cursor = ctx.cursor,
-  } })
-  if #payload > config.max_agent_bytes then cancel(state, 'size_limit'); error_message('送信サイズ制限を超えています'); return end
-  state.cwd = prepare.tempdir()
-  if not state.cwd then cancel(state, 'internal_error'); error_message('専用作業ディレクトリを作成できません'); return end
-  state.started = uv.hrtime()
-  local function progress()
-    if active == state and state.running and not state.cancelled then
-      status(state, state.phase, true)
-    end
-  end
-  status(state, 'starting', true)
-  if state.cancelled or active ~= state then return end
-  if not ctx.valid() then cancel(state, 'conflict'); return end
-  state.timer = uv.new_timer()
-  state.timer:start(1000, 1000, vim.schedule_wrap(progress))
-  local parser = events.new(config.max_agent_bytes, function(phase)
-    vim.schedule(function()
-      if active == state and state.running and not state.cancelled then status(state, phase, true) end
-    end)
-  end)
-  local bytes = 0
-  local function stream(stdout)
-    return function(err, chunk)
-      if err then state.failure = 'process_exit' end
-      if chunk then
-        bytes = bytes + #chunk
-        if bytes > config.max_agent_bytes then state.failure = 'size_limit'
-        elseif stdout then
-          local _, parse_error = parser:feed(chunk)
-          if parse_error then state.failure = parse_error end
-        end
-        if state.failure and state.process then state.process:kill(15) end
-      end
-    end
-  end
-  local ok, process = pcall(vim.system, config.agent, {
-    cwd = state.cwd, stdin = payload .. '\n', text = true,
-    timeout = config.agent_timeout_ms, env = {
-      HODOCODE_AGENT_TIMEOUT_MS = tostring(config.agent_timeout_ms), HODOCODE_EDIT_PROTOCOL = '2',
-    },
-    stdout = stream(true), stderr = stream(false),
-  }, vim.schedule_wrap(function(result)
-    prepare.clean_cwd(state)
-    if state.cancelled or active ~= state then return end
-    local response, parse_error = parser:finish()
-    local code = state.failure
-    if result.code == 124 or (result.signal and result.signal ~= 0 and elapsed(state) >= config.agent_timeout_ms) then code = 'timeout' end
-    if not code and response and response.event == 'error' then code = response.code end
-    if not code and result.code ~= 0 then code = 'process_exit' end
-    if not code then code = parse_error end
+  local function complete(response, code)
+    if active ~= state then return end
+    if state.cancelled then finish_status(state, code or 'cancelled'); return end
     local function fail(reason, detail)
       local message = failure_text(state, reason, detail)
       outcome(state, message, reason)
@@ -305,6 +268,7 @@ local function launch(config, prompt, state, ctx)
       error_message(message)
     end
     if code then fail(code); return end
+    if type(response) ~= 'table' or type(response.message) ~= 'string' then fail('invalid_response'); return end
     status(state, 'validating', true)
     if state.cancelled or active ~= state then return end
     if response.version ~= nil and response.version ~= vim.fn.sha256(ctx.content) then fail('version_mismatch'); return end
@@ -361,6 +325,105 @@ local function launch(config, prompt, state, ctx)
     end
     outcome(state, response.message, 'nochange')
     finish_status(state)
+  end
+  if config.agent_transport == 'acp' then
+    local payload = { root = state.session.root, prompt = prompt, intent = state.intent, request_id = state.id,
+      buffer = { path = ctx.path, content = ctx.content, modified = ctx.options.modified,
+        filetype = ctx.options.filetype, cursor = ctx.cursor } }
+    if #vim.json.encode(payload) > config.max_agent_bytes then cancel(state, 'size_limit'); return end
+    status(state, 'starting', true)
+    if state.cancelled or active ~= state then return end
+    if not ctx.valid() then cancel(state, 'conflict'); return end
+    state.acp_pending = true
+    local ok, handle, launch_error = pcall(function()
+      return require('hodocode.acp').prompt(config, payload, {
+        on_status = function(phase)
+          if active == state and not state.cancelled then status(state, phase, true) end
+        end,
+        on_chunk = function(chunk)
+          if active ~= state or state.cancelled then return end
+          local first = state.stream == nil
+          state.stream = (state.stream or '') .. chunk
+          if first then status(state, 'streaming', true) else session.changed() end
+        end,
+        on_tool = function(tool)
+          if active ~= state or state.cancelled then return end
+          state.tool = vim.deepcopy(tool)
+          session.changed()
+        end,
+        on_permission = function(params, done)
+          if active ~= state or state.cancelled then done({ outcome = { outcome = 'cancelled' } }); return end
+          return require('hodocode.acp_permission').request(params, done)
+        end,
+        on_done = complete,
+      })
+    end)
+    state.acp_pending = nil
+    if not ok then complete(nil, 'spawn_failed'); return end
+    if not handle then complete(nil, launch_error or 'configuration_error'); return end
+    if active ~= state then return end
+    state.acp_handle, state.process = handle, handle
+    if state.cancelled then
+      status(state, 'cancelling', true, 'cancelled')
+      handle.cancel()
+    elseif state.phase == 'starting' then status(state, 'waiting', true) end
+    return
+  end
+  local payload = vim.json.encode({ prompt = prompt, session_id = session.get().id, request_id = state.id,
+    intent = state.intent, history = state.history, buffer = {
+    path = ctx.path, content = ctx.content, modified = ctx.options.modified,
+    filetype = ctx.options.filetype, cursor = ctx.cursor,
+  } })
+  if #payload > config.max_agent_bytes then cancel(state, 'size_limit'); error_message('送信サイズ制限を超えています'); return end
+  state.cwd = prepare.tempdir()
+  if not state.cwd then cancel(state, 'internal_error'); error_message('専用作業ディレクトリを作成できません'); return end
+  state.started = uv.hrtime()
+  local function progress()
+    if active == state and state.running and not state.cancelled then
+      status(state, state.phase, true)
+    end
+  end
+  status(state, 'starting', true)
+  if state.cancelled or active ~= state then return end
+  if not ctx.valid() then cancel(state, 'conflict'); return end
+  state.timer = uv.new_timer()
+  state.timer:start(1000, 1000, vim.schedule_wrap(progress))
+  local parser = events.new(config.max_agent_bytes, function(phase)
+    vim.schedule(function()
+      if active == state and state.running and not state.cancelled then status(state, phase, true) end
+    end)
+  end)
+  local bytes = 0
+  local function stream(stdout)
+    return function(err, chunk)
+      if err then state.failure = 'process_exit' end
+      if chunk then
+        bytes = bytes + #chunk
+        if bytes > config.max_agent_bytes then state.failure = 'size_limit'
+        elseif stdout then
+          local _, parse_error = parser:feed(chunk)
+          if parse_error then state.failure = parse_error end
+        end
+        if state.failure and state.process then state.process:kill(15) end
+      end
+    end
+  end
+  local ok, process = pcall(vim.system, config.agent, {
+    cwd = state.cwd, stdin = payload .. '\n', text = true,
+    timeout = config.agent_timeout_ms, env = {
+      HODOCODE_AGENT_TIMEOUT_MS = tostring(config.agent_timeout_ms), HODOCODE_EDIT_PROTOCOL = '2',
+    },
+    stdout = stream(true), stderr = stream(false),
+  }, vim.schedule_wrap(function(result)
+    prepare.clean_cwd(state)
+    if state.cancelled or active ~= state then return end
+    local response, parse_error = parser:finish()
+    local code = state.failure
+    if result.code == 124 or (result.signal and result.signal ~= 0 and elapsed(state) >= config.agent_timeout_ms) then code = 'timeout' end
+    if not code and response and response.event == 'error' then code = response.code end
+    if not code and result.code ~= 0 then code = 'process_exit' end
+    if not code then code = parse_error end
+    complete(response, code)
   end))
   if not ok then
     local message = failure_text(state, 'spawn_failed')
@@ -378,7 +441,7 @@ function M.run(config, prompt, intent, target)
   intent = intent or 'edit'
   if intent ~= 'chat' and intent ~= 'edit' then error_message('不正な要求種別です'); return end
   if not prepare.argv(config.agent) then
-    error_message('AI接続先が未設定です。setup({ agent = { 実行ファイル, 引数... } })でJSONアダプターを指定してください'); return
+    error_message('AI接続先が未設定です。setup({ agent = { 実行ファイル, 引数... } })でJSONアダプターまたはACPコマンドを指定してください'); return
   end
   target = target or { buf = vim.api.nvim_get_current_buf(), win = vim.api.nvim_get_current_win(),
     cursor = vim.api.nvim_win_get_cursor(0) }
@@ -386,16 +449,20 @@ function M.run(config, prompt, intent, target)
     if active then error_message('エージェントは実行中です。:HodoCodeCancelで中止できます'); return end
     local ctx, err = capture(target)
     if not ctx then error_message(err); return end
+    local selected, project_error = session.activate(config, ctx.buf)
+    if not selected then
+      error_message(project_error == 'outside_root' and '設定したプロジェクト外のファイルには送信できません' or '別のプロジェクトの要求が実行中です'); return
+    end
     require('hodocode.chat').open(config, target)
     if active or shutting_down then return end
     if not ctx.valid() then error_message(failures.conflict); return end
     request_serial = request_serial + 1
-    local state = { cancelled = false, source = ctx.buf, intent = intent, started = uv.hrtime(),
-      id = session.get().id .. '-' .. request_serial, file = vim.fn.fnamemodify(ctx.path, ':t'),
-      history = session.history() }
+    local state = { session = selected, transport = config.agent_transport, cancelled = false, source = ctx.buf, intent = intent, started = uv.hrtime(),
+      id = selected.id .. '-' .. request_serial, file = vim.fn.fnamemodify(ctx.path, ':t'),
+      history = config.agent_transport ~= 'acp' and session.history(selected) or nil }
     active = state
-    session.get().request = state
-    session.append('user', value, { intent = intent, file = state.file, request_id = state.id, status = 'sent' })
+    selected.request = state
+    session.append('user', value, { intent = intent, file = state.file, request_id = state.id, status = 'sent' }, selected)
     session.changed()
     launch(config, value, state, ctx)
     return active == state

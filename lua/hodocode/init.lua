@@ -5,7 +5,8 @@ local plugin_root = vim.fn.fnamemodify(source, ':h:h:h')
 local defaults = {
   backend = { plugin_root .. '/bin/hodocode' }, language = 'auto', root = nil,
   timeout_ms = 120000, max_response_bytes = 8 * 1024 * 1024,
-  agent = nil, agent_timeout_ms = 120000, max_agent_bytes = 1024 * 1024,
+  agent = nil, agent_transport = 'json', agent_timeout_ms = 120000, max_agent_bytes = 1024 * 1024,
+  acp_cancel_timeout_ms = 3000,
   tree = 'auto', graph_renderer = nil, explain_agent = nil, chat = nil, excludes = {},
 }
 M.config = vim.deepcopy(defaults)
@@ -386,7 +387,7 @@ function M.setup(options)
   require('hodocode.explain').clear()
   M.config = vim.tbl_deep_extend('force', vim.deepcopy(defaults), options or {})
   assert(type(M.config.backend) == 'table' and #M.config.backend > 0, 'backend must be an argv list')
-  for _, key in ipairs({ 'timeout_ms', 'max_response_bytes', 'agent_timeout_ms', 'max_agent_bytes' }) do
+  for _, key in ipairs({ 'timeout_ms', 'max_response_bytes', 'agent_timeout_ms', 'max_agent_bytes', 'acp_cancel_timeout_ms' }) do
     local value = M.config[key]
     assert(type(value) == 'number' and value > 0 and value == math.floor(value), key .. ' must be a positive integer')
   end
@@ -395,6 +396,7 @@ function M.setup(options)
     assert(argv == nil or (type(argv) == 'table' and #argv > 0 and type(argv[1]) == 'string' and argv[1] ~= ''), key .. ' must be an argv list')
     for _, arg in ipairs(argv or {}) do assert(type(arg) == 'string', 'command arguments must be strings') end
   end
+  assert(vim.tbl_contains({ 'json', 'acp' }, M.config.agent_transport), 'agent_transport must be json or acp')
   assert(vim.tbl_contains({ 'auto', 'native', 'snacks' }, M.config.tree), 'tree must be auto, native or snacks')
   assert(M.config.graph_renderer == nil or type(M.config.graph_renderer) == 'function', 'graph_renderer must be a function')
   assert(type(M.config.excludes) == 'table', 'excludes must be a list')

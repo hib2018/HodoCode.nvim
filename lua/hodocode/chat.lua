@@ -117,6 +117,24 @@ function M.render(force)
   end
   local lines = {}
   local request = session.request
+  if request and type(request.stream) == 'string' and request.stream ~= '' then
+    lines[#lines + 1] = ''
+    lines[#lines + 1] = '**アシスタント（受信中・未確定）**'
+    if request.intent == 'edit' then lines[#lines + 1] = '```json' end
+    append(lines, request.stream)
+    if request.intent == 'edit' then lines[#lines + 1] = '```' end
+  end
+  if request and type(request.tool) == 'table' then
+    local tool = request.tool
+    local function compact(value)
+      return type(value) == 'string' and value:sub(1, 160):gsub('[%c]', ' ') or ''
+    end
+    if tool.sessionUpdate == 'notice' then
+      lines[#lines + 1] = '通知を受信'
+    else
+      lines[#lines + 1] = 'ツール: ' .. compact(tool.title or tool.kind) .. ' / ' .. ui.label(tool.status)
+    end
+  end
   local status = request and require('hodocode.agent').status(request.source) or session.last_status
   local phase = type(status) == 'table' and status.phase or status or (request and request.phase)
   if phase and not quiet[phase] then
@@ -190,8 +208,22 @@ end
 
 function M.open(config, target)
   setup()
+  local selected = config or view.config
+  local source = target or capture() or M.source()
+  if selected.agent_transport == 'acp' then
+    if not valid_source(source) then
+      vim.notify('HodoCode: 有効なソースバッファがありません', vim.log.levels.ERROR)
+      return false
+    end
+    local session, reason = require('hodocode.session').activate(selected, source.buf)
+    if not session then
+      vim.notify('HodoCode: ' .. (reason == 'busy'
+        and 'エージェントは実行中です。:HodoCodeCancelで中止できます'
+        or 'プロジェクトを選択できません: ' .. tostring(reason)), vim.log.levels.INFO)
+      return false
+    end
+  end
   if config then M.configure(config) end
-  local source = target or capture()
   if valid_source(source) then view.source = vim.deepcopy(source) end
   if not view.buf or not vim.api.nvim_buf_is_valid(view.buf) then
     view.buf = vim.api.nvim_create_buf(false, true)
