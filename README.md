@@ -144,7 +144,20 @@ require('hodocode').setup({
 
 HodoCodeモードの`A`または`:HodoCodeAgent`で、同じ会話への編集依頼ポップアップを開きます。複数行を入力でき、`Ctrl-s`／`Ctrl-Enter`またはノーマルモードの`Enter`で送信します。挿入モードの`Enter`は改行、`Esc`／ノーマルモードの`q`は未送信の入力だけを取り消します。`:HodoCodeAgent 指示`なら入力を省略でき、会話画面から実行してもその画面の対象ソースへ依頼します。`a/E`の解説用`explain_agent`は別設定・別保護経路のままです。`agent`が未設定なら送信せず設定案内を表示します。
 
-fxを利用する場合は、macOS/LinuxでPython 3・設定済みの`fx`がPATHにある環境なら、同梱アダプターを明示設定できます（パスは導入先へ置き換えてください）。
+fxの常駐ACP接続は明示的に選択できます（fx 0.0.18／ACP v1で検証）。最初の送信で起動し、同じプロジェクトではプロセス・会話を再利用します。
+
+```lua
+require('hodocode').setup({
+  agent_transport = 'acp',
+  agent = { 'fx', '--no-additional-dirs', 'acp', '--permission-mode', 'ask' },
+  agent_timeout_ms = 120000,
+  acp_cancel_timeout_ms = 3000,
+})
+```
+
+回答は逐次表示し、確定した編集パッチだけを既存の検証処理へ渡します。`x`の後は元の依頼の終了応答まで次の送信を止め、猶予を超えたら接続を終了します。別プロジェクトには会話を流用しません。**ACPのfx履歴には未保存本文も保存されます**。従来の`--no-save`とは異なり、Neovim終了時にも自動削除しません。直接書き込み・シェル・MCP等の許可要求は拒否し、確認可能な読取ツールだけを利用者が許可できます。`auto`／`full-access`モードは利用しないでください。[接続・安全性・履歴の詳細](docs/acp.md)。
+
+既定の`agent_transport = 'json'`では従来のJSON/JSONLアダプターを維持します。macOS/LinuxでPython 3・設定済みの`fx`がPATHにある環境なら、同梱アダプターを明示設定できます（パスは導入先へ置き換えてください）。
 
 ```lua
 require('hodocode').setup({
