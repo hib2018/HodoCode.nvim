@@ -217,11 +217,27 @@ local function failure_text(state, code, detail)
   return message .. ('（経過 %.1f秒）'):format(elapsed(state) / 1000)
 end
 
+local function relative_path(root, path)
+  if not root then return nil end
+  root, path = session.realpath(root), session.realpath(path)
+  local prefix = root == '/' and '/' or root .. '/'
+  if path:sub(1, #prefix) == prefix then return path:sub(#prefix + 1) end
+end
+
 local function outcome(state, message, result, edits)
   if state.recorded then return end
   state.recorded = true
+  local citations = { message }
+  for _, change in ipairs(state.changes or {}) do
+    citations[#citations + 1] = '変更箇所: `' .. change.path .. ':' .. change.line .. '`'
+  end
+  local sources = state.reference_sources
+  sources[state.path] = state.reference_source
+  local references = require('hodocode.chat_links').capture(table.concat(citations, '\n'), state.root, sources)
+  state.reference_sources = nil
   session.append('assistant', message, { intent = state.intent, file = state.file,
-    request_id = state.id, status = result, outcome = result, edits = edits }, state.session)
+    request_id = state.id, status = result, outcome = result, edits = edits,
+    root = state.root, path = state.path, references = references, changes = state.changes }, state.session)
 end
 
 local function cancel(state, code)
@@ -316,7 +332,13 @@ local function launch(config, prompt, state, ctx)
           vim.api.nvim_create_autocmd('BufWipeout', { buffer = ctx.buf, once = true, callback = function() snapshots[ctx.buf] = nil end })
         end
         snapshots[ctx.buf] = ctx.saved
-        require('hodocode.edit_marks').set(ctx.buf, ctx.content, text(ctx.buf))
+        state.reference_source = text(ctx.buf)
+        local positions = require('hodocode.edit_marks').set(ctx.buf, ctx.content, state.reference_source)
+        local path = relative_path(state.root, state.path) or state.path
+        for _, line in ipairs(positions or {}) do
+          state.changes = state.changes or {}
+          state.changes[#state.changes + 1] = { path = path, line = line }
+        end
         outcome(state, response.message, 'applied', response.edits)
         finish_status(state)
         local diff = package.loaded['hodocode.inline_diff']
@@ -328,8 +350,8 @@ local function launch(config, prompt, state, ctx)
     finish_status(state)
   end
   if config.agent_transport == 'acp' then
-    local payload = { root = state.session.root, prompt = prompt, intent = state.intent, request_id = state.id,
-      buffer = { path = ctx.path, content = ctx.content, modified = ctx.options.modified,
+    local payload = { root = state.root, prompt = prompt, intent = state.intent, request_id = state.id,
+      buffer = { path = ctx.path, relative_path = relative_path(state.root, ctx.path), content = ctx.content, modified = ctx.options.modified,
         filetype = ctx.options.filetype, cursor = ctx.cursor } }
     if #vim.json.encode(payload) > config.max_agent_bytes then cancel(state, 'size_limit'); return end
     status(state, 'starting', true)
@@ -338,6 +360,10 @@ local function launch(config, prompt, state, ctx)
     state.acp_pending = true
     local ok, handle, launch_error = pcall(function()
       return require('hodocode.acp').prompt(config, payload, {
+        on_context = function(context)
+          if active ~= state or state.cancelled then return end
+          for _, source in ipairs(context) do state.reference_sources[source.path] = source.content end
+        end,
         on_status = function(phase)
           if active == state and not state.cancelled then status(state, phase, true) end
         end,
@@ -372,7 +398,7 @@ local function launch(config, prompt, state, ctx)
   end
   local payload = vim.json.encode({ prompt = prompt, session_id = session.get().id, request_id = state.id,
     intent = state.intent, history = state.history, buffer = {
-    path = ctx.path, content = ctx.content, modified = ctx.options.modified,
+    path = ctx.path, relative_path = relative_path(state.root, ctx.path), content = ctx.content, modified = ctx.options.modified,
     filetype = ctx.options.filetype, cursor = ctx.cursor,
   } })
   if #payload > config.max_agent_bytes then cancel(state, 'size_limit'); error_message('送信サイズ制限を超えています'); return end
@@ -454,12 +480,14 @@ function M.run(config, prompt, intent, target)
     if not selected then
       error_message(project_error == 'outside_root' and '設定したプロジェクト外のファイルには送信できません' or '別のプロジェクトの要求が実行中です'); return
     end
+    local root = selected.root or session.project(config, ctx.buf)
     require('hodocode.chat').open(config, target)
     if active or shutting_down then return end
     if not ctx.valid() then error_message(failures.conflict); return end
     request_serial = request_serial + 1
     local state = { session = selected, transport = config.agent_transport, cancelled = false, source = ctx.buf, intent = intent, started = uv.hrtime(),
       id = selected.id .. '-' .. request_serial, file = vim.fn.fnamemodify(ctx.path, ':t'),
+      root = root, path = ctx.path, reference_source = ctx.content, reference_sources = { [ctx.path] = ctx.content },
       history = config.agent_transport ~= 'acp' and session.history(selected) or nil }
     active = state
     selected.request = state

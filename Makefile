@@ -30,6 +30,10 @@ test: build
 	nvim --headless -u NONE -l tests/ux_actions.lua
 	nvim --headless -u NONE -l tests/edit_prompt.lua
 	nvim --headless -u NONE -l tests/edit_marks.lua
+	nvim --headless -u NONE -l tests/chat_links.lua
+	nvim --headless -u NONE -l tests/answer_changes.lua
+	nvim --headless -u NONE -l tests/chat_links_ui.lua
+	nvim --headless -u NONE -l tests/chat_link_flow.lua
 	nvim --headless -u NONE -l tests/edit_flow.lua
 	nvim --headless -u NONE -l tests/edit_fx_integration.lua
 	nvim --headless -u NONE -l tests/import_syntax.lua
