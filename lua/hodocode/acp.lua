@@ -3,7 +3,7 @@ local rpc = require('hodocode.acp_rpc')
 local uv = vim.uv or vim.loop
 local records = {}
 local shutting_down = false
-local instructions = [[You are answering inside HodoCode. You may use only read_file, grep_files and glob_files to discover and read relevant source files inside Metadata.repository_root, on demand. Respect .gitignore; skip .git, node_modules, build, dist, target, .cache, credentials (.env files and private keys), binary files and files larger than 1 MiB. Never use filesystem writes, shell commands, MCP or other tools. Embedded source snapshots are authoritative, including unsaved changes: never replace them with disk versions. Metadata.path is the only editable file; all other files and snapshots are read-only context. Do not modify files directly. For chat, answer naturally in Markdown. For edit, after any read tools finish, return only strict JSON: {"message":"explanation","edits":[{"old_text":"exact source","new_text":"replacement"}]}, or {"message":"explanation","content":"complete replacement"}. Never use Markdown fences. At most 256 edits.]]
+local instructions = [[You are answering inside HodoCode. You may use only read_file, grep_files and glob_files to discover and read relevant source files inside Metadata.repository_root, on demand. Respect .gitignore; skip .git, node_modules, build, dist, target, .cache, credentials (.env files and private keys), binary files and files larger than 1 MiB. Never use filesystem writes, shell commands, MCP or other tools. Embedded source snapshots are authoritative, including unsaved changes: never replace them with disk versions. Metadata.path is the only editable file; all other files and snapshots are read-only context. Do not modify files directly. When citing code, use project-relative `path:line` with a 1-based line number; cite only locations you can identify, not guessed positions. For chat, answer naturally in Markdown. For edit, after any read tools finish, return only strict JSON: {"message":"explanation","edits":[{"old_text":"exact source","new_text":"replacement"}]}, or {"message":"explanation","content":"complete replacement"}. Never use Markdown fences. At most 256 edits.]]
 
 local function call(callback, ...)
   if callback then return pcall(callback, ...) end
@@ -86,7 +86,7 @@ function M.prompt(config, payload, opts)
   for _, arg in ipairs(argv) do
     if not bounded(arg, 65536) then return nil, 'configuration_error' end
   end
-  for _, name in ipairs({ 'on_chunk', 'on_status', 'on_tool', 'on_permission', 'on_disconnect' }) do
+  for _, name in ipairs({ 'on_chunk', 'on_status', 'on_tool', 'on_permission', 'on_disconnect', 'on_context' }) do
     if opts[name] ~= nil and type(opts[name]) ~= 'function' then return nil, 'configuration_error' end
   end
   payload = { root = root, prompt = payload.prompt, intent = payload.intent, request_id = payload.request_id,
@@ -98,6 +98,7 @@ function M.prompt(config, payload, opts)
   local signature = vim.json.encode(argv)
   local record = records[root]
   if record and record.busy then return nil, 'busy' end
+  if not call(opts.on_context, context) then return nil, 'internal_error' end
   if record and record.signature ~= signature then
     close_record(record)
     records[root], record = nil, nil
@@ -154,7 +155,7 @@ function M.prompt(config, payload, opts)
     if done or cancelled then return end
     handle.metrics.startup_ms = now() - began
     local metadata = { intent = payload.intent, path = payload.buffer.path, cursor = payload.buffer.cursor,
-      request_id = payload.request_id, repository_root = root }
+      request_id = payload.request_id, repository_root = root, relative_path = payload.buffer.relative_path }
     local content = { { type = 'text', text = 'Current request: ' .. payload.prompt .. '\nMetadata: ' .. vim.json.encode(metadata) } }
     local function snapshot(path, text)
       if record.caps.embeddedContext then

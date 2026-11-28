@@ -146,6 +146,29 @@ class EditFxTests(unittest.TestCase):
         self.assertEqual([e.get("phase") for e in seen["events"][:-1]], ["starting", "received", "validating"])
         popen.assert_called_once()
 
+    def test_relative_citation_path_without_absolute_metadata(self):
+        request = copy.deepcopy(REQUEST)
+        request['buffer']['relative_path'] = 'pkg/日本 語/example.go'
+        status, _, process, *_ = self.invoke(request=request)
+        self.assertEqual(status, 0)
+        wire = process.communicate.call_args.args[0]
+        self.assertEqual(json.loads(wire)['buffer']['relative_path'], 'pkg/日本 語/example.go')
+        self.assertNotIn(b'/private/project', wire)
+        self.assertIn('path:line', adapter.SYSTEM)
+        self.assertIn('path:line', adapter.CHAT_SYSTEM)
+        request['buffer']['relative_path'] = 'pkg/type:name.go'
+        status, _, process, *_ = self.invoke(request=request)
+        self.assertEqual(status, 0, 'a legal POSIX filename must not break editing')
+        self.assertEqual(json.loads(process.communicate.call_args.args[0])['buffer']['relative_path'],
+                         'pkg/type:name.go')
+        for invalid in ('/private/example.go', '../example.go', 'pkg/../example.go',
+                        r'C:\private\example.go', 'pkg//example.go'):
+            with self.subTest(relative_path=invalid):
+                request['buffer']['relative_path'] = invalid
+                status, _, _, popen, *_ = self.invoke(request=request)
+                self.assertEqual(status, 1)
+                popen.assert_not_called()
+
     def test_shared_conversation_and_current_buffer_reach_provider(self):
         request = copy.deepcopy(REQUEST)
         request.update(session_id="session-a", request_id="session-a-2", intent="edit", history=[

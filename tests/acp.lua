@@ -88,8 +88,9 @@ for line in sys.stdin:
   local helper = vim.fn.bufadd(helper_path)
   vim.fn.bufload(helper)
   vim.api.nvim_buf_set_lines(helper, 0, -1, false, { 'unsaved helper' })
-  local chunks, tools, permissions = {}, {}, 0
+  local chunks, tools, permissions, context = {}, {}, 0, nil
   local value, code, h = request('permission', 'edit', {
+    on_context = function(sources) context = sources end,
     on_chunk = function(text) chunks[#chunks + 1] = text end,
     on_tool = function(tool)
       assert(not tool.rawInput)
@@ -108,6 +109,8 @@ for line in sys.stdin:
   assert(value.edits[1].new_text == 'changed' and value.version == vim.fn.sha256('source'))
   assert(permissions == 1 and #tools == 2 and h.metrics.first_chunk_ms and h.metrics.complete_ms)
   assert(vim.fn.readfile(helper_path)[1] == 'disk helper' and vim.bo[helper].modified)
+  assert(#context == 1 and context[1].content == 'unsaved helper\n')
+  assert((vim.uv or vim.loop).fs_realpath(context[1].path) == (vim.uv or vim.loop).fs_realpath(helper_path))
   local id = acp.info(root).sessionId
   value = request('second')
   assert(value.message == 'answer-2' and acp.info(root).sessionId == id)
